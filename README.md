@@ -41,6 +41,147 @@ Never install packages globally; everything goes into `.venv`.
 Copy `.env.example` to `.env`. `MODE` is set only by the operator, never by an
 agent. Do not put secrets in `.env.example`.
 
+## Manual test: dummy agent with curl.exe (VS Code, two PowerShell terminals)
+
+Uses `examples\dummy_request.json` and `scripts\print_stub_token.py`. The
+token is a STUB, signed with a throwaway in-memory key; direct mode never
+checks it. Nothing secret is written to disk.
+
+### 0. Open two terminals and confirm they are PowerShell
+
+Open the integrated terminal (`` Ctrl+` ``), then a second one with the `+`
+button. In **each** terminal run:
+
+```powershell
+$PSVersionTable.PSEdition
+```
+
+It must print `Desktop` (Windows PowerShell 5.1) or `Core` (PowerShell 7).
+If you get an error or nothing, the terminal is cmd or Git Bash: pick
+**PowerShell** from the `v` menu next to `+` and try again.
+
+### 1. Terminal 1: start the dummy agent
+
+```powershell
+Set-Location "C:\Users\Haroon Traders\Desktop\FYP\zt-broker-testbed"
+& ".\.venv\Scripts\python.exe" -c "import sys; print(sys.prefix)"
+$env:MODE = "direct"
+$env:AGENT_NAME = "dummy"
+& ".\.venv\Scripts\python.exe" -m uvicorn wrapper.main:app --host 127.0.0.1 --port 8001
+```
+
+The `sys.prefix` line must print the repo's `.venv` folder; stop if it does
+not. Expected server output (the process number differs):
+
+```
+INFO:     Started server process [8720]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
+```
+
+Leave this terminal running. Each request appears here as one line, e.g.
+`INFO:     127.0.0.1:57334 - "POST /message HTTP/1.1" 200 OK`.
+
+### 2. Terminal 2: send requests
+
+```powershell
+Set-Location "C:\Users\Haroon Traders\Desktop\FYP\zt-broker-testbed"
+
+# a) Health check
+curl.exe -s "http://127.0.0.1:8001/health"
+```
+Expected: `{"status":"ok","agent":"dummy","mode":"direct"}`
+
+```powershell
+# b) Get a stub token (one line, starts with eyJ)
+$token = & ".\.venv\Scripts\python.exe" "scripts\print_stub_token.py"
+$token
+```
+
+```powershell
+# c) Send the example request, pretty-printed
+curl.exe -s -X POST "http://127.0.0.1:8001/message" -H "Content-Type: application/json" -H "Authorization: Bearer $token" --data-binary "@examples/dummy_request.json" | ConvertFrom-Json | ConvertTo-Json -Depth 5
+```
+
+Expected (msg_id and timestamp differ on every call; timestamps are UTC):
+
+```
+{
+    "schema_version":  "0.2",
+    "msg_id":  "<new UUID>",
+    "trace_id":  "22222222-2222-4222-8222-222222222222",
+    "parent_msg_id":  "11111111-1111-4111-8111-111111111111",
+    "msg_type":  "response",
+    "sender":  "dummy",
+    "receiver":  "planner",
+    "action":  "db.query_aggregate",
+    "resource":  "db:sales",
+    "payload":  {
+                    "status":  "ok",
+                    "result":  {
+                                   "text":  "Hello from the dummy agent."
+                               },
+                    "error":  null
+                },
+    "delegation_chain":  [
+                             "user",
+                             "planner"
+                         ],
+    "timestamp":  "<now, UTC, ends in Z>",
+    "decision":  null,
+    "reason_code":  null,
+    "redacted_fields":  null,
+    "broker_signature":  null
+}
+```
+
+Leave out `| ConvertFrom-Json | ConvertTo-Json -Depth 5` to see the raw
+one-line JSON.
+
+```powershell
+# d) Invalid body: expect the error JSON, then "HTTP 422"
+curl.exe -s -w "`nHTTP %{http_code}`n" -X POST "http://127.0.0.1:8001/message" -H "Content-Type: application/json" --data-binary "not json"
+
+# e) Same request with an absolute path containing a space: expect "HTTP 200"
+curl.exe -s -o NUL -w "HTTP %{http_code}`n" -X POST "http://127.0.0.1:8001/message" -H "Content-Type: application/json" --data-binary "@C:\Users\Haroon Traders\Desktop\FYP\zt-broker-testbed\examples\dummy_request.json"
+```
+
+```powershell
+# f) Look at the message log: last two lines are your request ("in") and the
+#    response ("out"). The second command must print nothing (no token logged).
+Get-Content ".\logs\dummy.jsonl" -Tail 2
+Select-String -Path ".\logs\dummy.jsonl" -Pattern "Bearer|eyJhbGci"
+```
+
+Quoting notes: always use `curl.exe` (plain `curl` is an alias for
+`Invoke-WebRequest` in Windows PowerShell); keep URLs, headers and the
+`"@file"` argument in double quotes; `` `n `` inside double quotes is
+PowerShell's newline. Send JSON from a file with `--data-binary "@..."`,
+not inline: Windows PowerShell 5.1 strips inner quotes from arguments to
+native programs.
+
+### 3. Stop the server and clean up
+
+In terminal 1 press `Ctrl+C` (expect `Shutting down` ... `Finished server
+process`). The `$env:` variables stay set in that terminal until you close
+it, or remove them with:
+
+```powershell
+Remove-Item Env:MODE, Env:AGENT_NAME
+```
+
+Optional check that a bad MODE stops the server at startup (terminal 1):
+
+```powershell
+$env:MODE = "bogus"; $env:AGENT_NAME = "dummy"
+& ".\.venv\Scripts\python.exe" -m uvicorn wrapper.main:app --port 8001
+```
+
+Expected: a traceback ending in
+`wrapper.config.ConfigError: MODE must be one of ('direct', 'broker'), got 'bogus'`
+and no "Uvicorn running" line. Then run `Remove-Item Env:MODE, Env:AGENT_NAME`.
+
 ## Message log
 
 Each wrapper appends every request it receives and every response it sends to
