@@ -60,6 +60,10 @@ def test_json_round_trip_keeps_utc_z_timestamp():
     assert Envelope.model_validate(dumped) == env
 
 
+def test_ids_up_to_128_chars_accepted():
+    Envelope.model_validate(request_dict(msg_id="x" * 128, trace_id="y" * 128))
+
+
 def test_broker_fields_default_to_none():
     env = Envelope.model_validate(request_dict())
     assert env.decision is None
@@ -100,6 +104,8 @@ def test_extra_fields_forbidden(field):
     {"schema_version": "0.1"},
     {"msg_type": "notify"},
     {"msg_id": ""},
+    {"msg_id": "x" * 129},
+    {"trace_id": "x" * 129},
     {"sender": 123},
     {"payload": "not an object"},
     {"delegation_chain": "user"},
@@ -157,6 +163,8 @@ def test_longer_chain_ending_with_sender_is_valid():
     (request_dict, {"receiver": "planner"}, "sender and receiver must differ"),
     (request_dict, {"parent_msg_id": "m-0"}, "parent_msg_id = null"),
     (request_dict, {"delegation_chain": ["user", "research"]}, "must end with sender"),
+    (request_dict, {"decision": "ALLOW"}, "must not carry broker fields: decision"),
+    (request_dict, {"broker_signature": "forged"}, "must not carry broker fields: broker_signature"),
     (response_dict, {"parent_msg_id": None}, "parent_msg_id set"),
     (response_dict, {"parent_msg_id": "m-2"}, "must differ from msg_id"),
     (response_dict, {"delegation_chain": ["user", "database"]}, "must end with receiver"),

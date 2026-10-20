@@ -14,9 +14,9 @@ code follows, but it is not final until the named owner confirms it.
 
 ## Raised during implementation (step 1)
 
-| # | Topic | Current proposal | Status |
+| # | Topic | Current answer | Status |
 |---|---|---|---|
-| Q7 | delegation_chain on responses | Q3 says the last element must equal `sender` AND a response copies the request's chain. Both cannot hold for a response: the copied chain ends with the request's sender, which is the response's *receiver*. Current code: request `chain[-1] == sender`, response `chain[-1] == receiver`. | Provisional, owner to confirm (broker team) |
-| Q8 | Structure vs rule checks | `Envelope` checks structure only (required fields, types, literals, no extra fields, UTC timestamp). Cross-field rules (chain start/end, `parent_msg_id` vs `msg_type`, sender != receiver) are in a separate `rule_violations()`, so direct mode can accept rule-breaking envelopes while builders and the broker still check them. | Provisional, owner to confirm (user) |
-| Q9 | ID format | `msg_id` and `trace_id` are non-empty strings. The testbed will generate UUID4 strings, but the contract does not require UUIDs. | Provisional, owner to confirm (broker team) |
-| Q10 | Broker fields set by agents | `decision`, `reason_code`, `redacted_fields`, `broker_signature` are optional on any envelope, so an agent (e.g. malicious) can put `decision: "ALLOW"` in its own message. Proposal: the broker always overwrites/strips them, and receivers trust them only with a valid `broker_signature`. Also open: are they allowed on requests (e.g. a SANITIZEd forwarded request) or only on responses? Current code allows both. | Provisional, owner to confirm (broker team) |
+| Q7 | delegation_chain on responses | Q3's two rules conflict for a response (a copied chain ends with the response's *receiver*). Accepted approach: request `chain[-1] == sender`; response copies the request's chain, so `chain[-1] == receiver`. | Accepted by user; provisional, owner to confirm (teammate) |
+| Q8 | Structure vs rule checks | `Envelope` checks structure only (required fields, types, literals, no extra fields, UTC timestamp; direct mode keeps rejecting non-UTC and numeric timestamps). Cross-field rules are in `rule_violations()`, used by builders and the broker, not by direct mode. | Decided (user) |
+| Q9 | ID format | `msg_id`, `trace_id`, `parent_msg_id`: non-empty strings, max 128 characters. The testbed generates UUID4 strings when it creates messages; the contract does not require UUIDs. | Decided (user); broker team to note |
+| Q10 | Broker fields set by agents | Requests must not carry `decision`, `reason_code`, `redacted_fields` or `broker_signature` (a rule in `rule_violations()`). Receivers trust broker fields only with a valid `broker_signature`. The broker must strip or overwrite any broker fields that come from agents. A "forged decision" attack scenario may be added. | Decided (user); scenario pending teammates |

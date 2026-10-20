@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from contracts.version import SCHEMA_VERSION
 
 NonEmptyStr = Annotated[str, Field(min_length=1)]
+IdStr = Annotated[str, Field(min_length=1, max_length=128)]  # UUID4 when we create one
 
 MsgType = Literal["request", "response"]
 
@@ -31,9 +32,9 @@ class Envelope(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal[SCHEMA_VERSION]
-    msg_id: NonEmptyStr
-    trace_id: NonEmptyStr
-    parent_msg_id: NonEmptyStr | None  # required key; null for requests
+    msg_id: IdStr
+    trace_id: IdStr
+    parent_msg_id: IdStr | None  # required key; null for requests
     msg_type: MsgType
     sender: NonEmptyStr
     receiver: NonEmptyStr
@@ -43,7 +44,8 @@ class Envelope(BaseModel):
     delegation_chain: list[NonEmptyStr]
     timestamp: datetime
 
-    # Broker reply fields (not used yet).
+    # Broker reply fields (not used yet). Only valid on responses, and
+    # trusted only with a valid broker_signature.
     decision: Decision | None = None
     reason_code: str | None = None
     redacted_fields: list[str] | None = None
@@ -65,6 +67,9 @@ class Envelope(BaseModel):
         return value
 
 
+BROKER_FIELDS = ("decision", "reason_code", "redacted_fields", "broker_signature")
+
+
 def rule_violations(env: Envelope) -> list[str]:
     """Return the cross-field rules this envelope breaks (empty list = OK)."""
     problems: list[str] = []
@@ -82,6 +87,9 @@ def rule_violations(env: Envelope) -> list[str]:
             problems.append("a request must have parent_msg_id = null")
         if chain and chain[-1] != env.sender:
             problems.append("a request's delegation_chain must end with sender")
+        present = [f for f in BROKER_FIELDS if getattr(env, f) is not None]
+        if present:
+            problems.append(f"a request must not carry broker fields: {', '.join(present)}")
     else:
         if env.parent_msg_id is None:
             problems.append("a response must have parent_msg_id set")
