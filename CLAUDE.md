@@ -76,7 +76,9 @@ paths with pathlib relative to the file (never hard-code the absolute path).
 
 ## Commands (PowerShell, from the repo root)
 - Tests:       & ".\.venv\Scripts\python.exe" -m pytest
-- Run wrapper: $env:MODE="direct"; $env:AGENT_NAME="dummy"; & ".\.venv\Scripts\python.exe" -m uvicorn wrapper.app:app --port 8001
+- Run wrapper: $env:MODE="direct"; $env:AGENT_NAME="dummy"; & ".\.venv\Scripts\python.exe" -m uvicorn wrapper.main:app --port 8001
+  (wrapper.main reads MODE/AGENT_NAME at import and fails fast if they are invalid;
+  tests use wrapper.app.create_app(Settings(...)) instead)
 - HTTP calls:  use `curl.exe`, NOT `curl` (in Windows PowerShell `curl` is an
   alias for Invoke-WebRequest)
 
