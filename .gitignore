@@ -1,0 +1,20 @@
+# Virtual environment
+.venv/
+
+# Python artefacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Secrets and keys: never commit. Credentials are issued locally.
+.env
+keys/
+*.pem
+*.key
+*.jwk
+
+# Runtime message logs
+logs/
