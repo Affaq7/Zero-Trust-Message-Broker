@@ -8,9 +8,12 @@ startup instead of running in an unknown mode.
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, get_args
 
 Mode = Literal["direct", "broker"]
+
+DEFAULT_LOG_DIR = Path(__file__).resolve().parents[1] / "logs"
 
 
 class ConfigError(RuntimeError):
@@ -21,6 +24,7 @@ class ConfigError(RuntimeError):
 class Settings:
     mode: Mode
     agent_name: str
+    log_dir: Path = DEFAULT_LOG_DIR
 
 
 def load_settings(environ: Mapping[str, str] = os.environ) -> Settings:
@@ -30,4 +34,6 @@ def load_settings(environ: Mapping[str, str] = os.environ) -> Settings:
     agent_name = environ.get("AGENT_NAME", "").strip()
     if not agent_name:
         raise ConfigError("AGENT_NAME is not set")
-    return Settings(mode=mode, agent_name=agent_name)
+    log_dir = environ.get("LOG_DIR", "").strip()
+    return Settings(mode=mode, agent_name=agent_name,
+                    log_dir=Path(log_dir) if log_dir else DEFAULT_LOG_DIR)

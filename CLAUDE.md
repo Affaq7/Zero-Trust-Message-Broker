@@ -44,9 +44,12 @@ Agents still attach a token when sending; direct mode just never checks it.
   not present them as final anywhere.
 
 ## Message log
-The wrapper appends every message to a JSONL file in logs/ (gitignored) with:
-msg_id, trace_id, sender, receiver, action, timestamp. Nothing else: no
-payloads, no scenario labels, no trust scores.
+The wrapper appends every parsed request ("in") and every response it sends
+("out") to logs/<AGENT_NAME>.jsonl (gitignored; override with LOG_DIR). One line
+per envelope: {"logged_at", "logged_by", "direction", "envelope"}, where
+envelope is the full envelope. Never log HTTP headers, the Authorization
+token or the proof header. No scenario labels or trust scores in the log; the
+runner records labels separately.
 
 ## Sending messages
 Agents send through `send_message()`. It builds the envelope and posts it to

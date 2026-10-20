@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from contracts import Envelope, make_response
 from contracts.payloads import ResponsePayload
 from wrapper.config import Settings
+from wrapper.message_log import MessageLog
 from wrapper.registry import get_agent
 
 log = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ def _error(status: int, message: str, **extra) -> JSONResponse:
 
 def create_app(settings: Settings) -> FastAPI:
     agent = get_agent(settings.agent_name)  # unknown agent fails at startup
+    message_log = MessageLog(settings.log_dir, settings.agent_name)
     app = FastAPI(title=f"agent wrapper ({settings.agent_name})")
 
     @app.get("/health")
@@ -45,6 +47,9 @@ def create_app(settings: Settings) -> FastAPI:
             details = json.loads(exc.json(include_url=False, include_input=False))
             return _error(422, "invalid envelope", details=details)
 
+        # Every parsed envelope is logged, including misdirected ones.
+        message_log.append(env, "in")
+
         if env.receiver != settings.agent_name:
             return _error(400, f"receiver {env.receiver!r} is not this agent")
         if env.msg_type != "request":
@@ -56,6 +61,8 @@ def create_app(settings: Settings) -> FastAPI:
             log.exception("agent %s failed on msg %s", settings.agent_name, env.msg_id)
             payload = ResponsePayload(status="error", error="agent failed")
 
-        return make_response(env, payload).model_dump(mode="json")
+        response = make_response(env, payload)
+        message_log.append(response, "out")
+        return response.model_dump(mode="json")
 
     return app

@@ -37,8 +37,18 @@ def request_dict(**overrides):
     return data
 
 
+_log_dir = None
+
+
+@pytest.fixture(autouse=True)
+def _temp_log_dir(tmp_path):
+    # Keep the message log of these tests out of the repo's logs/ folder.
+    global _log_dir
+    _log_dir = tmp_path / "logs"
+
+
 def client(mode="direct", agent="dummy"):
-    return TestClient(create_app(Settings(mode=mode, agent_name=agent)))
+    return TestClient(create_app(Settings(mode=mode, agent_name=agent, log_dir=_log_dir)))
 
 
 def post(c, body, headers=None):
