@@ -20,3 +20,11 @@ code follows, but it is not final until the named owner confirms it.
 | Q8 | Structure vs rule checks | `Envelope` checks structure only (required fields, types, literals, no extra fields, UTC timestamp; direct mode keeps rejecting non-UTC and numeric timestamps). Cross-field rules are in `rule_violations()`, used by builders and the broker, not by direct mode. | Decided (user) |
 | Q9 | ID format | `msg_id`, `trace_id`, `parent_msg_id`: non-empty strings, max 128 characters. The testbed generates UUID4 strings when it creates messages; the contract does not require UUIDs. | Decided (user); broker team to note |
 | Q10 | Broker fields set by agents | Requests must not carry `decision`, `reason_code`, `redacted_fields` or `broker_signature` (a rule in `rule_violations()`). Receivers trust broker fields only with a valid `broker_signature`. The broker must strip or overwrite any broker fields that come from agents. A "forged decision" attack scenario may be added. | Decided (user); scenario pending teammates |
+
+## Raised during implementation (step 2)
+
+| # | Topic | Current proposal | Status |
+|---|---|---|---|
+| Q11 | Tool agent calling itself | With the Q1 `served_by`, the only allowed callers of `file.delete` and `tool.send_email_external` are `tool`, which also serves them (same for `tool` calling `tool.send_email_internal`). That would be a message from `tool` to `tool`, which breaks the "sender != receiver" rule and the Q1 idea that every action goes to *another* agent. Options: (a) `planner` becomes the caller of these actions; (b) a separate executor agent serves them; (c) self-messages are allowed for `tool`. The catalog is unchanged for now; the conflict is only recorded. | Open, owner to confirm (teammates) |
+| Q12 | `admin.change_policy` served_by | Prohibited, so `served_by: null` and `allowed_roles: []`. The loader enforces this for every Prohibited action. A scenario that *sends* it still needs a receiver; the scenario picks one. | Provisional, owner to confirm (teammates) |
+| Q13 | Roles vs agents lists | The catalog holds `roles: [planner, research, database, tool]` and `agents: [planner, research, database, tool, malicious]`. There is no `malicious` role (Q2). | Provisional, owner to confirm (credentials teammate) |

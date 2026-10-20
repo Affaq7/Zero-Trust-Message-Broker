@@ -1,0 +1,60 @@
+# Action catalog, contract v0.2. The only place actions are defined.
+#
+# Default-deny: any action not listed here is denied, for every role.
+# allowed_roles = the roles that may CALL the action.
+# served_by     = the agent that EXECUTES it. PROVISIONAL, see
+#                 docs/open-questions.md Q1 (owner to confirm).
+# agents / roles lists are PROVISIONAL, see Q2.
+#
+# The catalog is enforced by the broker only. Direct mode ignores it.
+
+schema_version: "0.2"
+
+roles: [planner, research, database, tool]
+agents: [planner, research, database, tool, malicious]
+
+actions:
+  - name: db.query_aggregate
+    class: Permitted
+    allowed_roles: [planner, research]
+    served_by: database
+
+  - name: db.query_rows
+    class: Conditional
+    allowed_roles: [planner]
+    served_by: database
+
+  - name: db.update_records
+    class: Conditional
+    allowed_roles: [planner]
+    served_by: database
+
+  - name: file.read_internal
+    class: Permitted
+    allowed_roles: [planner, research]
+    served_by: tool
+
+  - name: file.delete
+    class: Conditional
+    allowed_roles: [tool]
+    served_by: tool
+
+  - name: web.fetch_page
+    class: Permitted
+    allowed_roles: [research]
+    served_by: tool
+
+  - name: tool.send_email_internal
+    class: Permitted
+    allowed_roles: [planner, tool]
+    served_by: tool
+
+  - name: tool.send_email_external
+    class: Conditional
+    allowed_roles: [tool]
+    served_by: tool
+
+  - name: admin.change_policy
+    class: Prohibited
+    allowed_roles: []
+    served_by: null   # nobody may call it, so nobody serves it
