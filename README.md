@@ -9,22 +9,29 @@ for contract details that are still provisional.
 
 Requires Python 3.12 (`winget install --id Python.Python.3.12 -e`).
 
+The repo path contains a space, so always quote paths. All commands below are
+run from the repo root.
+
 ```powershell
+# 0. Go to the repo root
+Set-Location "C:\Users\Haroon Traders\Desktop\FYP\zt-broker-testbed"
+
 # 1. Create the virtual environment (once)
-py -3.12 -m venv .venv
+py -3.12 -m venv ".venv"
 
 # 2. Verify the interpreter is the .venv one. Stop if it is not.
-.\.venv\Scripts\python.exe -c "import sys; print(sys.prefix)"
+& ".\.venv\Scripts\python.exe" -c "import sys; print(sys.prefix)"
 
 # 3. Install the project and dev dependencies into .venv
-.\.venv\Scripts\python.exe -m pip install -e .[dev]
+#    (re-run after adding a new top-level package such as wrapper/ or agents/)
+& ".\.venv\Scripts\python.exe" -m pip install -e ".[dev]"
 
 # 4. Run the tests
-.\.venv\Scripts\python.exe -m pytest
+& ".\.venv\Scripts\python.exe" -m pytest
 ```
 
 Instead of the full paths you can activate the venv for the current shell
-with `.\.venv\Scripts\Activate.ps1`. If PowerShell blocks the script, run
+with `& ".\.venv\Scripts\Activate.ps1"`. If PowerShell blocks the script, run
 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
 
 Never install packages globally; everything goes into `.venv`.

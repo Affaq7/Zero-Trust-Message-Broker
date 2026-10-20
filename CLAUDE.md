@@ -58,18 +58,25 @@ from the operator-set environment only.
 - Credentials are issued by a teammate's script; keys stay in keys/ (gitignored).
 - .env is gitignored; only .env.example (no secrets) is committed.
 
+## Repo path contains a space
+The repo lives at "C:\Users\Haroon Traders\Desktop\FYP\zt-broker-testbed".
+Do not move it. Quote every path in commands, scripts and docs. In code, build
+paths with pathlib relative to the file (never hard-code the absolute path).
+
 ## Virtual environment (required)
 - All Python work happens in .venv (Python 3.12). Never install globally and
   never use the system Python for project work.
-- Create:   py -3.12 -m venv .venv
-- Install:  .\.venv\Scripts\python.exe -m pip install -e .[dev]
+- Create:   py -3.12 -m venv ".venv"
+- Install:  & ".\.venv\Scripts\python.exe" -m pip install -e ".[dev]"
+  Re-run it after adding a new top-level package (wrapper/, agents/, runner/):
+  the editable install only maps packages that existed when it ran.
 - Verify before every install or test run, and stop if it is not .venv:
-  .\.venv\Scripts\python.exe -c "import sys; print(sys.prefix)"
-- Or activate: .\.venv\Scripts\Activate.ps1
+  & ".\.venv\Scripts\python.exe" -c "import sys; print(sys.prefix)"
+- Or activate: & ".\.venv\Scripts\Activate.ps1"
 
-## Commands (PowerShell)
-- Tests:       .\.venv\Scripts\python.exe -m pytest
-- Run wrapper: $env:MODE="direct"; $env:AGENT_NAME="dummy"; .\.venv\Scripts\python.exe -m uvicorn wrapper.app:app --port 8001
+## Commands (PowerShell, from the repo root)
+- Tests:       & ".\.venv\Scripts\python.exe" -m pytest
+- Run wrapper: $env:MODE="direct"; $env:AGENT_NAME="dummy"; & ".\.venv\Scripts\python.exe" -m uvicorn wrapper.app:app --port 8001
 - HTTP calls:  use `curl.exe`, NOT `curl` (in Windows PowerShell `curl` is an
   alias for Invoke-WebRequest)
 
