@@ -36,7 +36,7 @@ actions:
 
   - name: file.delete
     class: Conditional
-    allowed_roles: [tool]
+    allowed_roles: [planner]   # PROVISIONAL (Q11): was [tool]
     served_by: tool
 
   - name: web.fetch_page
@@ -51,7 +51,7 @@ actions:
 
   - name: tool.send_email_external
     class: Conditional
-    allowed_roles: [tool]
+    allowed_roles: [planner]   # PROVISIONAL (Q11): was [tool]
     served_by: tool
 
   - name: admin.change_policy

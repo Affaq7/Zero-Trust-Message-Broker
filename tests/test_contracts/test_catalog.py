@@ -8,16 +8,17 @@ from pydantic import ValidationError
 
 from contracts.catalog import CATALOG_PATH, ActionCatalog, get_catalog, load_catalog
 
-# The agreed table (v0.2). served_by is provisional (open-questions Q1).
+# The agreed table (v0.2). served_by is provisional (open-questions Q1);
+# planner as caller of file.delete / send_email_external is provisional (Q11).
 EXPECTED = {
     "db.query_aggregate":       ("Permitted",   {"planner", "research"}, "database"),
     "db.query_rows":            ("Conditional", {"planner"},             "database"),
     "db.update_records":        ("Conditional", {"planner"},             "database"),
     "file.read_internal":       ("Permitted",   {"planner", "research"}, "tool"),
-    "file.delete":              ("Conditional", {"tool"},                "tool"),
+    "file.delete":              ("Conditional", {"planner"},             "tool"),
     "web.fetch_page":           ("Permitted",   {"research"},            "tool"),
     "tool.send_email_internal": ("Permitted",   {"planner", "tool"},     "tool"),
-    "tool.send_email_external": ("Conditional", {"tool"},                "tool"),
+    "tool.send_email_external": ("Conditional", {"planner"},             "tool"),
     "admin.change_policy":      ("Prohibited",  set(),                   None),
 }
 ROLES = ["planner", "research", "database", "tool"]
@@ -42,6 +43,16 @@ def test_catalog_matches_agreed_table():
 @pytest.mark.parametrize("action", sorted(EXPECTED))
 def test_is_allowed_matches_table(role, action):
     assert get_catalog().is_allowed(role, action) == (role in EXPECTED[action][1])
+
+
+def test_self_service_actions_only_where_still_open():
+    # Q11: an action's server should not also be its caller. The one case
+    # left (tool -> tool.send_email_internal) is still open.
+    self_served = {
+        spec.name for spec in get_catalog().actions
+        if spec.served_by in spec.allowed_roles
+    }
+    assert self_served == {"tool.send_email_internal"}
 
 
 @pytest.mark.parametrize("role", ROLES)
