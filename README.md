@@ -41,6 +41,15 @@ Never install packages globally; everything goes into `.venv`.
 Copy `.env.example` to `.env`. `MODE` is set only by the operator, never by an
 agent. Do not put secrets in `.env.example`.
 
+## Message log
+
+Each wrapper appends every request it receives and every response it sends to
+`logs\<AGENT_NAME>.jsonl` (gitignored; `LOG_DIR` overrides the folder).
+
+**Run one uvicorn worker per agent** (the default; do not pass `--workers`).
+The log is only safe for one process: several workers writing the same file
+could interleave lines.
+
 ## HTTP calls from PowerShell
 
 Use `curl.exe`, not `curl`. In Windows PowerShell `curl` is an alias for

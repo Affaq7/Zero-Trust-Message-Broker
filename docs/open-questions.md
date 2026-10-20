@@ -53,3 +53,11 @@ code follows, but it is not final until the named owner confirms it.
 | Q20 | `cnf.jkt` format | The `cnf` claim comes from RFC 7800; the `jkt` member is defined by RFC 9449 (DPoP), not RFC 7800, and holds an RFC 7638 SHA-256 JWK thumbprint, base64url, 43 characters. `TokenClaims` currently enforces that format. | Owner to decide (credentials teammate) |
 | Q21 | Times and lifetime | `iat`, `nbf`, `exp` are whole seconds; `iat <= exp` and `nbf < exp` are enforced. `time_problems(now, leeway)` checks validity. Proposal: 5 seconds clock leeway, maximum token lifetime 1 hour (`exp - iat <= 3600`). Not in the code yet: adding these as constants/checks to `contracts/tokens.py` needs approval. | Provisional, owner to confirm (credentials teammate / broker team) |
 | Q22 | Signature verification and replay | The broker and the credentials script handle signature verification and `jti` replay tracking. The testbed does not; `contracts/tokens.py` only describes claims and checks the header algorithm (EdDSA only). Direct mode never checks tokens. | Decided (user) |
+
+## Raised during implementation (steps 6-7)
+
+| # | Topic | Current answer | Status |
+|---|---|---|---|
+| Q23 | Starlette/httpx deprecation warning | The test client warns that using `httpx` with `starlette.testclient` is deprecated and suggests `httpx2`. Ignored for now; no new dependency. | Revisit when dependency versions are pinned (user) |
+| Q24 | Unparseable envelopes in the log | Envelopes that fail to parse (HTTP 422) are not logged, since there is no envelope to store. Possible later addition: a content-free "unparseable" record (time, agent, no body) so malformed-message attacks can be counted. | Later (user) |
+| Q25 | Log file per agent | One `logs/<AGENT_NAME>.jsonl` per agent, written by one uvicorn worker. Several workers for the same agent could interleave lines. | Decided (user): one worker per agent |
