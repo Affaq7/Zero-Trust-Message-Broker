@@ -44,3 +44,12 @@ code follows, but it is not final until the named owner confirms it.
 |---|---|---|---|
 | Q17 | `action` / `resource` on a response | The contract does not say what these hold on a response. `make_response()` copies them from the request, so the broker can match a response to the action it answers. | Provisional, owner to confirm (broker team) |
 | Q18 | Rule checks in the builders | `new_request()` refuses envelopes that break a rule (`EnvelopeRuleError`), since honest agents should never send one. `make_response()` does not check rules, so in direct mode an agent can still answer a rule-breaking request (baseline, no security); its response then copies the broken chain. The malicious agent builds rule-breaking envelopes directly with `Envelope(...)`. | Provisional, owner to confirm (user) |
+
+## Raised during implementation (step 5)
+
+| # | Topic | Current proposal | Status |
+|---|---|---|---|
+| Q19 | `aud` shape | JWT allows `aud` to be a string or a list. Since aud is one party (receiver agent or broker, Q6), `TokenClaims` accepts a single string only. | Provisional, owner to confirm (credentials teammate) |
+| Q20 | `cnf.jkt` format | `cnf` is the RFC 7800 container; the `jkt` member itself is registered by RFC 9449 (DPoP) and holds an RFC 7638 SHA-256 JWK thumbprint, base64url, 43 characters. `TokenClaims` enforces that format. | Provisional, owner to confirm (credentials teammate) |
+| Q21 | Times and lifetime | `iat`, `nbf`, `exp` are whole seconds; `iat <= exp` and `nbf < exp` are enforced. `time_problems(now, leeway)` checks validity. No maximum token lifetime and no leeway value are agreed yet. | Open, owner to confirm (credentials teammate / broker team) |
+| Q22 | Signature verification and replay | `contracts/tokens.py` describes claims and checks the header algorithm (EdDSA only) but does not verify signatures or track `jti` replay; that belongs to the broker and the credentials script. Direct mode never checks tokens. | Provisional, owner to confirm (broker team) |
