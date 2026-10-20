@@ -46,7 +46,7 @@ actions:
 
   - name: tool.send_email_internal
     class: Permitted
-    allowed_roles: [planner, tool]
+    allowed_roles: [planner]   # PROVISIONAL (Q11): was [planner, tool]
     served_by: tool
 
   - name: tool.send_email_external

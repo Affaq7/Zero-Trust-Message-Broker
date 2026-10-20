@@ -17,7 +17,7 @@ EXPECTED = {
     "file.read_internal":       ("Permitted",   {"planner", "research"}, "tool"),
     "file.delete":              ("Conditional", {"planner"},             "tool"),
     "web.fetch_page":           ("Permitted",   {"research"},            "tool"),
-    "tool.send_email_internal": ("Permitted",   {"planner", "tool"},     "tool"),
+    "tool.send_email_internal": ("Permitted",   {"planner"},             "tool"),
     "tool.send_email_external": ("Conditional", {"planner"},             "tool"),
     "admin.change_policy":      ("Prohibited",  set(),                   None),
 }
@@ -45,14 +45,13 @@ def test_is_allowed_matches_table(role, action):
     assert get_catalog().is_allowed(role, action) == (role in EXPECTED[action][1])
 
 
-def test_self_service_actions_only_where_still_open():
-    # Q11: an action's server should not also be its caller. The one case
-    # left (tool -> tool.send_email_internal) is still open.
+def test_no_agent_serves_an_action_it_may_call():
+    # Q11: every action is a message to ANOTHER agent.
     self_served = {
         spec.name for spec in get_catalog().actions
         if spec.served_by in spec.allowed_roles
     }
-    assert self_served == {"tool.send_email_internal"}
+    assert self_served == set()
 
 
 @pytest.mark.parametrize("role", ROLES)
