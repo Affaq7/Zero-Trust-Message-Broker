@@ -12,11 +12,13 @@ The JWT and the per-message proof are never part of the envelope. Trust scores
 and test labels must never appear here; ``extra="forbid"`` rejects them.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from contracts.payloads import ResponsePayload
 from contracts.version import SCHEMA_VERSION
 
 NonEmptyStr = Annotated[str, Field(min_length=1)]
@@ -99,3 +101,80 @@ def rule_violations(env: Envelope) -> list[str]:
             problems.append("a response's delegation_chain must end with receiver")
 
     return problems
+
+
+# --- builders ------------------------------------------------------------------
+
+class EnvelopeRuleError(ValueError):
+    """A builder was asked to create an envelope that breaks the rules."""
+
+
+def new_id() -> str:
+    return str(uuid4())
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def new_request(
+    *,
+    sender: str,
+    receiver: str,
+    action: str,
+    resource: str,
+    payload: dict[str, Any],
+    chain_so_far: list[str],
+    trace_id: str | None = None,
+) -> Envelope:
+    """Build a request. ``chain_so_far`` is the chain this hop received
+    (``["user"]`` for the first hop); the sender is appended to it.
+
+    A new trace_id is generated unless one is passed (to continue a trace).
+    The payload is not checked against its action schema (that is the
+    broker's job). Raises EnvelopeRuleError if the result breaks a rule.
+    """
+    env = Envelope(
+        schema_version=SCHEMA_VERSION,
+        msg_id=new_id(),
+        trace_id=trace_id or new_id(),
+        parent_msg_id=None,
+        msg_type="request",
+        sender=sender,
+        receiver=receiver,
+        action=action,
+        resource=resource,
+        payload=payload,
+        delegation_chain=[*chain_so_far, sender],
+        timestamp=utc_now(),
+    )
+    problems = rule_violations(env)
+    if problems:
+        raise EnvelopeRuleError("; ".join(problems))
+    return env
+
+
+def make_response(request: Envelope, payload: ResponsePayload) -> Envelope:
+    """Build the response to ``request``: new msg_id, same trace_id,
+    parent_msg_id = request.msg_id, sender/receiver swapped, action,
+    resource and delegation_chain copied, no broker fields.
+
+    Rules are NOT enforced here: in direct mode an agent must still be able
+    to answer a request that itself breaks the rules (baseline, no security).
+    """
+    if request.msg_type != "request":
+        raise ValueError("can only respond to a request")
+    return Envelope(
+        schema_version=SCHEMA_VERSION,
+        msg_id=new_id(),
+        trace_id=request.trace_id,
+        parent_msg_id=request.msg_id,
+        msg_type="response",
+        sender=request.receiver,
+        receiver=request.sender,
+        action=request.action,
+        resource=request.resource,
+        payload=payload.model_dump(mode="json"),
+        delegation_chain=list(request.delegation_chain),
+        timestamp=utc_now(),
+    )

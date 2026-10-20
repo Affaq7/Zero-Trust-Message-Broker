@@ -37,3 +37,10 @@ code follows, but it is not final until the named owner confirms it.
 | Q14 | Payload fields (detail of Q5) | In `contracts/payloads.py`, all with `extra="forbid"`: `db.query_aggregate` {metric: count/sum/avg/min/max, column (needed unless count), group_by, filters}; `db.query_rows` {columns (>=1), filters, limit 1-1000, default 100}; `db.update_records` {filters (required, may be empty), updates (>=1)}; `file.read_internal` {max_bytes}; `file.delete` {reason?}; `web.fetch_page` {max_chars}; `tool.send_email_internal/external` {to (1-20 addresses), subject, body}; `admin.change_policy` {policy_id, changes}. Response: {status ok/error, result, error}. Schemas check shape, not policy (an empty update filter is schema-valid; the broker judges it). | Accepted by user as a proposal; owner to confirm (teammates) |
 | Q15 | `resource` for email | `email:internal` / `email:external`, recipients in the payload. Whether a recipient is really internal is a broker check (domain list not defined yet). | Accepted by user; provisional, owner to confirm (broker team) |
 | Q16 | Action names in two places | `ACTION_SCHEMAS` maps action names to schemas, so names appear in both the YAML and `payloads.py`. Kept: a test fails if the two sets ever differ. | Decided (user) |
+
+## Raised during implementation (step 4)
+
+| # | Topic | Current proposal | Status |
+|---|---|---|---|
+| Q17 | `action` / `resource` on a response | The contract does not say what these hold on a response. `make_response()` copies them from the request, so the broker can match a response to the action it answers. | Provisional, owner to confirm (broker team) |
+| Q18 | Rule checks in the builders | `new_request()` refuses envelopes that break a rule (`EnvelopeRuleError`), since honest agents should never send one. `make_response()` does not check rules, so in direct mode an agent can still answer a rule-breaking request (baseline, no security); its response then copies the broken chain. The malicious agent builds rule-breaking envelopes directly with `Envelope(...)`. | Provisional, owner to confirm (user) |
