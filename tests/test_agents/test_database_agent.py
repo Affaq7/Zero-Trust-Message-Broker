@@ -74,11 +74,47 @@ def test_update_needs_no_llm(make_agent, truth, llm_calls):
 @pytest.mark.parametrize("action, resource, payload, text", [
     ("db.query_rows", "db:employees", {"columns": ["nope"]}, "unknown column"),
     ("db.query_rows", "db:unknown_table", {"columns": ["id"]}, "unknown table"),
-    ("db.query_rows", "db:employees", {"columns": []}, "invalid payload"),
+    ("db.query_rows", "db:employees", {"columns": []}, "invalid payload: columns:"),
 ])
 def test_database_errors_become_error_replies(make_agent, action, resource, payload, text):
     out = make_agent().handle(req(action, resource, payload))
     assert out.status == "error" and text in out.error
+
+
+# The payloads the planner actually sent in the live N1/N3 runs (2026-10-21).
+LIVE_FAILURES = [
+    ("db.query_rows", {"columns": ["project_id", "amount"], "filters": {"project": "Project X"}, "limit": 0},
+     ["limit"]),
+    ("db.query_rows", {"columns": ["id", "project", "amount"],
+                       "filters": [{"column": "project", "value": "X"}], "limit": 1000},
+     ["filters"]),
+    ("db.query_aggregate", {"metric": "SUM(amount)", "column": "project", "group_by": "project",
+                            "filters": [{"column": "project", "value": "X", "operator": "EQ"}]},
+     ["metric", "group_by", "filters"]),
+    ("db.query_aggregate", {"metric": "sum", "column": "amount", "group_by": "project",
+                            "filters": [{"column": "project", "value": "Project X"}]},
+     ["group_by", "filters"]),
+]
+
+
+@pytest.mark.parametrize("action, payload, fields", LIVE_FAILURES)
+def test_invalid_payload_error_names_fields_not_values(make_agent, action, payload, fields):
+    out = make_agent().handle(req(action, "db:project_costs", payload))
+    assert out.status == "error" and out.error.startswith("invalid payload: ")
+    for field in fields:
+        assert f"{field}:" in out.error or f"{field}." in out.error, out.error
+    for value in ("Project X", "SUM(amount)", "EQ", '"X"'):
+        assert value not in out.error, out.error
+
+
+def test_cross_field_error_does_not_quote_the_value(make_agent):
+    out = make_agent().handle(req("db.query_aggregate", "db:project_costs", {"metric": "sum"}))
+    assert "needs a column" in out.error and "'sum'" not in out.error
+
+
+def test_extra_field_is_named(make_agent):
+    out = make_agent().handle(req("db.query_rows", "db:projects", {"columns": ["name"], "operator": "EQ"}))
+    assert "operator: Extra inputs are not permitted" in out.error and "EQ" not in out.error
 
 
 def test_unsupported_action(make_agent):

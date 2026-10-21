@@ -119,6 +119,14 @@ def test_llm_failure_sends_nothing(make_agent, truth):
 
 # --- policy changes (mock admin handler) ---------------------------------------------
 
+def test_invalid_email_error_names_fields_not_values(make_agent):
+    agent = make_agent({"tool.compose_email": [DRAFT]})
+    bad = {**EMAIL, "to": ["not-an-address"]}
+    out = agent.handle(req("tool.send_email_internal", "email:internal", bad))
+    assert out.status == "error" and out.error.startswith("invalid payload: to:"), out.error
+    assert "not-an-address" not in out.error
+
+
 def test_unsupported_action_is_an_error_reply(make_agent):
     out = make_agent().handle(req("db.query_rows", "db:employees", {"columns": ["id"]}))
     assert out.status == "error" and "cannot perform" in out.error

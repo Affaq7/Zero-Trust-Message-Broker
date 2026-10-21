@@ -5,6 +5,7 @@ trace_id goes along as X-Trace-Id so ground truth can be matched to a run.
 """
 
 import os
+import re
 from typing import Any
 
 import httpx
@@ -17,6 +18,26 @@ class MockServiceError(RuntimeError):
     def __init__(self, message: str, status: int | None = None):
         super().__init__(message)
         self.status = status
+
+
+MAX_PROBLEMS = 6
+
+
+def describe_error(body: dict) -> str:
+    """Error text for the requesting agent. For an invalid payload it names each
+    offending field and the reason, never the values that were sent."""
+    error = str(body.get("error") or "")
+    details = body.get("details")
+    if error != "invalid payload" or not isinstance(details, list):
+        return error
+    problems = []
+    for d in details[:MAX_PROBLEMS]:
+        field = ".".join(str(p) for p in d.get("loc", []) if not isinstance(p, int)) or "payload"
+        reason = str(d.get("msg", "invalid"))
+        if d.get("type") == "value_error":       # custom checks may quote the value
+            reason = re.sub(r"\s+", " ", re.sub(r"'[^']*'", "", reason)).strip()
+        problems.append(f"{field}: {reason}")
+    return "invalid payload: " + "; ".join(problems)
 
 
 class MocksClient:
@@ -37,5 +58,5 @@ class MocksClient:
         except ValueError:
             body = {}
         if resp.status_code != 200:
-            raise MockServiceError(str(body.get("error") or f"HTTP {resp.status_code}"), resp.status_code)
+            raise MockServiceError(describe_error(body) or f"HTTP {resp.status_code}", resp.status_code)
         return body
