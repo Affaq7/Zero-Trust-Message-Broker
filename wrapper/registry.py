@@ -1,11 +1,17 @@
-"""Maps AGENT_NAME to the agent function the wrapper runs."""
+"""Maps the agent implementation name (AGENT_IMPL, default AGENT_NAME) to its code."""
 
 from agents import dummy
-from agents.base import AgentFn
+from agents.base import AgentFn, TaskFn
 from wrapper.config import ConfigError
 
+# Message handlers (POST /message).
 AGENTS: dict[str, AgentFn] = {
     "dummy": dummy.handle,
+}
+
+# Task handlers (POST /task), only for agents that can start work for the user.
+TASKS: dict[str, TaskFn] = {
+    "dummy": dummy.run_task,
 }
 
 
@@ -13,4 +19,8 @@ def get_agent(name: str) -> AgentFn:
     try:
         return AGENTS[name]
     except KeyError:
-        raise ConfigError(f"unknown AGENT_NAME {name!r}; known: {sorted(AGENTS)}") from None
+        raise ConfigError(f"unknown agent implementation {name!r}; known: {sorted(AGENTS)}") from None
+
+
+def get_task_handler(name: str) -> TaskFn | None:
+    return TASKS.get(name)

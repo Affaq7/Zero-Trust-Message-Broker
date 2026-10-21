@@ -28,6 +28,16 @@ class Settings:
     log_dir: Path = DEFAULT_LOG_DIR
     # Base URL of every agent's wrapper, used by send_message() in direct mode.
     agent_urls: dict[str, str] = field(default_factory=dict)
+    # Which agent code runs under AGENT_NAME (default: the same name). The
+    # runner sets AGENT_IMPL=malicious to start an impostor under a victim's name.
+    agent_impl: str | None = None
+    # Role claimed in this process's stub tokens. Default: AGENT_NAME when it
+    # is a catalog role; required otherwise (e.g. for "malicious", Q2).
+    agent_role: str | None = None
+
+    @property
+    def impl(self) -> str:
+        return self.agent_impl or self.agent_name
 
 
 def parse_agent_urls(value: str) -> dict[str, str]:
@@ -56,4 +66,6 @@ def load_settings(environ: Mapping[str, str] = os.environ) -> Settings:
     log_dir = environ.get("LOG_DIR", "").strip()
     return Settings(mode=mode, agent_name=agent_name,
                     log_dir=Path(log_dir) if log_dir else DEFAULT_LOG_DIR,
-                    agent_urls=parse_agent_urls(environ.get("AGENT_URLS", "")))
+                    agent_urls=parse_agent_urls(environ.get("AGENT_URLS", "")),
+                    agent_impl=environ.get("AGENT_IMPL", "").strip() or None,
+                    agent_role=environ.get("AGENT_ROLE", "").strip() or None)

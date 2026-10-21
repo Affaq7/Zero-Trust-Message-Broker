@@ -60,6 +60,11 @@ now. MODE and the receiver URLs (AGENT_URLS="name=url,...") are read from the
 operator-set environment at call time, never from a message. The caller passes
 the token (Authorization: Bearer); the X-Agent-Proof header is the PROOF STUB.
 Neither is logged. Tests inject in-process transports via the `client` argument.
+Agent code gets its own identity and a stub token per receiver from
+`wrapper.runtime.current_runtime()` (`.agent_name`, `.role`, `.token_for(receiver)`).
+`POST /task {task, trace_id?}` is the runner's stand-in for the human user; it
+accepts no other fields. `AGENT_IMPL` (default AGENT_NAME) picks the code that
+runs under AGENT_NAME; `AGENT_ROLE` sets the token role for non-role names.
 
 ## Secrets
 - Never write real keys or secrets into files.

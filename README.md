@@ -207,6 +207,12 @@ each wrapper where the other agents are with `AGENT_URLS` (comma-separated
 $env:AGENT_URLS = "dummy=http://127.0.0.1:8001,tool=http://127.0.0.1:8004"
 ```
 
+The runner starts work with `POST /task` (`{"task": "...", "trace_id": "..."}`),
+standing in for the human user; it accepts no other fields. Each wrapper mints
+its own STUB tokens (one throwaway key per process, one token per receiver).
+`AGENT_IMPL` runs different code under a name, e.g. an impostor:
+`$env:AGENT_NAME = "research"; $env:AGENT_IMPL = "malicious"`.
+
 The sender is the wrapper's own `AGENT_NAME`. In `MODE=direct` the request
 goes straight to the receiver's `/message`; `MODE=broker` is not implemented
 yet and raises an error.
