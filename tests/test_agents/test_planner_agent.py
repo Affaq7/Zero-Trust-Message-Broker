@@ -56,6 +56,28 @@ def test_available_actions_come_from_the_catalog():
     assert "admin.change_policy" not in actions       # nobody may call it
 
 
+def test_planner_knows_the_real_database_schema(tmp_path):
+    import sqlite3
+    from contextlib import closing
+
+    from agents.planner import DATA_TABLES
+    from mocks.seed import build_database
+
+    db = tmp_path / "schema.sqlite"
+    build_database(db)
+    with closing(sqlite3.connect(db)) as conn:
+        tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+        actual = {t: [c[1] for c in conn.execute(f'PRAGMA table_info("{t}")')] for t in tables}
+    assert DATA_TABLES == actual
+
+
+def test_system_prompt_fits_with_room_to_spare(fake_llm):
+    from agents.llm import estimate_tokens
+    planner = PlannerAgent(fake_llm("planner", {}), RecordingSender())
+    assert "db:project_costs" in planner.system
+    assert estimate_tokens(planner.system) < 1500         # leaves room for task, history and output
+
+
 def test_one_step_then_answer(make_planner, llm_calls):
     planner, sender = make_planner([COUNT, finish("There are 20 employees.")])
     result = planner.run_task(CTX)

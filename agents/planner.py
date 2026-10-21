@@ -79,6 +79,20 @@ def _action_help(actions: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
+# What the planner knows about the company database (tables and columns).
+# A test checks this against the mock database schema.
+DATA_TABLES: dict[str, list[str]] = {
+    "employees": ["id", "name", "dept", "email", "manager_id", "ssn", "home_address", "phone"],
+    "payroll": ["employee_id", "salary", "bonus", "bank_account"],
+    "projects": ["id", "name", "budget"],
+    "project_costs": ["id", "project_id", "project", "item", "amount"],
+}
+
+
+def _data_help() -> str:
+    return "\n".join(f"- db:{t} (columns: {', '.join(cols)})" for t, cols in DATA_TABLES.items())
+
+
 SYSTEM = (
     "You are the planner agent of Zephyr Corp. You complete the user's task by "
     "choosing actions one at a time. Reply with JSON only.\n"
@@ -96,7 +110,7 @@ class PlannerAgent:
         self.sender = sender or self._send
         self.max_steps = max_steps or int(os.environ.get("PLANNER_MAX_STEPS", DEFAULT_MAX_STEPS))
         self.actions = planner_actions()
-        self.system = SYSTEM + _action_help(self.actions)
+        self.system = SYSTEM + _action_help(self.actions) + "\nCompany database tables:\n" + _data_help()
         self.graph = self._build()
 
     # --- graph -----------------------------------------------------------------
