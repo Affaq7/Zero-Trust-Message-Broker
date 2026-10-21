@@ -23,8 +23,9 @@ broker's job. Adding any of them to direct mode would weaken the baseline.
 Agents still attach a token when sending; direct mode just never checks it.
 
 ## Fixed decisions (ask before changing)
-- Python 3.12 (3.11 also allowed), FastAPI + Uvicorn, Pydantic v2, httpx,
-  pytest, python-dotenv, PyYAML, PyJWT[crypto]
+- Python 3.12 (3.11 also allowed), FastAPI + Uvicorn, Pydantic v2 (2.12.x,
+  held there by CrewAI), httpx, pytest, python-dotenv, PyYAML, PyJWT[crypto],
+  langgraph, langchain-ollama, crewai (exact versions in constraints.txt)
 - Agents: LangGraph and CrewAI (mixed)
 - LLM: Ollama llama3:8b at LLM_BASE_URL (default http://localhost:11434), temperature 0
 - Transport: HTTP, JWT (EdDSA only) in `Authorization: Bearer`
@@ -75,7 +76,11 @@ paths with pathlib relative to the file (never hard-code the absolute path).
 - All Python work happens in .venv (Python 3.12). Never install globally and
   never use the system Python for project work.
 - Create:   py -3.12 -m venv ".venv"
-- Install:  & ".\.venv\Scripts\python.exe" -m pip install -e ".[dev]"
+- Install:  & ".\.venv\Scripts\python.exe" -m pip install -e ".[dev,agents]" -c "constraints.txt"
+  One venv holds everything, including LangGraph and CrewAI. constraints.txt
+  pins every version; CrewAI holds pydantic at 2.12.x (M16). After an
+  approved dependency change, regenerate constraints.txt from pip freeze.
+  Call agents.telemetry.disable_telemetry() before importing the frameworks.
   Re-run it after adding a new top-level package (wrapper/, agents/, runner/):
   the editable install only maps packages that existed when it ran.
 - Verify before every install or test run, and stop if it is not .venv:

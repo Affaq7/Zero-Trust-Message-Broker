@@ -21,6 +21,12 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+# LLM agent frameworks. Exact versions: constraints.txt (CrewAI pins pydantic 2.12.x).
+agents = [
+    "langgraph>=1.2",
+    "langchain-ollama>=1.1",
+    "crewai>=1.15",
+]
 
 [tool.setuptools.packages.find]
 include = ["contracts*", "wrapper*", "agents*", "runner*", "mocks*"]

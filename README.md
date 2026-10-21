@@ -22,9 +22,10 @@ py -3.12 -m venv ".venv"
 # 2. Verify the interpreter is the .venv one. Stop if it is not.
 & ".\.venv\Scripts\python.exe" -c "import sys; print(sys.prefix)"
 
-# 3. Install the project and dev dependencies into .venv
-#    (re-run after adding a new top-level package such as wrapper/ or agents/)
-& ".\.venv\Scripts\python.exe" -m pip install -e ".[dev]"
+# 3. Install the project, dev tools and agent frameworks (LangGraph, CrewAI)
+#    into .venv with the pinned versions. Takes several minutes the first time.
+#    Re-run after adding a new top-level package such as wrapper/ or agents/.
+& ".\.venv\Scripts\python.exe" -m pip install -e ".[dev,agents]" -c "constraints.txt"
 
 # 4. Run the tests
 & ".\.venv\Scripts\python.exe" -m pytest
@@ -43,6 +44,11 @@ with `& ".\.venv\Scripts\Activate.ps1"`. If PowerShell blocks the script, run
 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
 
 Never install packages globally; everything goes into `.venv`.
+
+`constraints.txt` holds the exact versions of every package. CrewAI holds
+pydantic at 2.12.x, so the whole project (including `contracts/`) runs on
+pydantic 2.12.5. CrewAI, LangChain and ChromaDB telemetry is switched off by
+`agents/telemetry.py`.
 
 ## Configuration
 
