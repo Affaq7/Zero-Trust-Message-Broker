@@ -14,6 +14,8 @@ from pydantic import ValidationError
 from contracts import new_request
 from contracts.tokens import (
     ALLOWED_ALGORITHMS,
+    BROKER_AUDIENCE,
+    BROKER_ISSUER,
     PROOF_HEADER,
     PROOF_STUB_VALUE,
     TokenClaims,
@@ -50,6 +52,18 @@ def test_valid_claims_parse():
 
 def test_only_eddsa_allowed():
     assert ALLOWED_ALGORITHMS == ("EdDSA",)
+
+
+def test_agreed_broker_constants():
+    assert BROKER_AUDIENCE == "ztbroker"
+    assert BROKER_ISSUER == "https://broker.ztbroker.local"
+    claims = TokenClaims.model_validate(claims_dict(aud=BROKER_AUDIENCE, iss=BROKER_ISSUER))
+    assert (claims.aud, claims.iss) == (BROKER_AUDIENCE, BROKER_ISSUER)
+
+
+def test_contract_does_not_enforce_iss_or_aud_values():
+    # Values are constants only (S9); any non-empty string is still accepted.
+    TokenClaims.model_validate(claims_dict(aud="database", iss="some-other-issuer"))
 
 
 @pytest.mark.parametrize("field", list(claims_dict().keys()))

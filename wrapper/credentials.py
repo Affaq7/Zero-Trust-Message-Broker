@@ -18,9 +18,9 @@ import jwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from contracts.tokens import TokenClaims
+from contracts.tokens import BROKER_ISSUER, TokenClaims
 
-ISSUER = "zt-local-stub-issuer"
+ISSUER = BROKER_ISSUER          # agreed issuer value (S9); still a stub signer
 LIFETIME_SECONDS = 300
 REFRESH_MARGIN_SECONDS = 30
 

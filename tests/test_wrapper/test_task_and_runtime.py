@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from agents.base import TaskResult
 from agents.dummy import FIXED_TEXT
-from contracts.tokens import TokenClaims, algorithm_allowed
+from contracts.tokens import BROKER_ISSUER, TokenClaims, algorithm_allowed
 from wrapper import registry
 from wrapper.app import create_app
 from wrapper.config import ConfigError, Settings, load_settings
@@ -145,6 +145,7 @@ def test_runtime_tokens_per_receiver(tmp_path, monkeypatch):
     assert (c_db.sub, c_db.role, c_db.aud) == ("planner", "planner", "database")
     assert c_tool.aud == "tool"
     assert c_db.cnf.jkt == c_tool.cnf.jkt                   # one key per process
+    assert c_db.iss == c_tool.iss == BROKER_ISSUER          # agreed issuer (S9)
     assert algorithm_allowed(db1)
 
 

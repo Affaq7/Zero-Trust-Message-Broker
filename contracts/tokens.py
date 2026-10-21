@@ -5,9 +5,10 @@ the only allowed algorithm. Credentials (keys and tokens) are issued by a
 teammate's script; this module only describes and checks claims. Direct mode
 never checks tokens at all.
 
-Provisional details (docs/open-questions.md Q6): aud is the receiver agent in
-direct mode and the broker in broker mode; cnf is {"jkt": <key thumbprint>};
-iss is a local issuer name.
+Agreed with the credentials teammate (docs/open-questions.md S9): aud is the
+receiver agent's name in direct mode and BROKER_AUDIENCE in broker mode; iss
+is BROKER_ISSUER; cnf is {"jkt": <RFC 7638 SHA-256 thumbprint>}. The values
+are defined here only; this contract does not check iss or aud.
 """
 
 from typing import Annotated
@@ -19,6 +20,10 @@ from contracts.catalog import get_catalog
 from contracts.envelope import Envelope
 
 ALLOWED_ALGORITHMS = ("EdDSA",)
+
+# Agreed values (S9). Constants only: TokenClaims does not enforce them.
+BROKER_AUDIENCE = "ztbroker"
+BROKER_ISSUER = "https://broker.ztbroker.local"
 
 NonEmptyStr = Annotated[str, Field(min_length=1, max_length=128)]
 # JWT NumericDate: whole seconds since the epoch. strict rejects bool/float.
