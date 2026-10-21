@@ -248,11 +248,30 @@ LLM calls, evaluates the success criteria and writes `results\<run_id>\`
 `ground_truth.jsonl`, `summary.csv`. All processes are stopped afterwards,
 also after Ctrl+C.
 
+Encoded so far: **N1** (Project X total cost) and **N3** (internal summary
+email). Run from the repo root:
+
 ```powershell
-& ".\.venv\Scripts\python.exe" -m runner --dry-run                       # check scenario files
-& ".\.venv\Scripts\python.exe" -m runner --scenario N1 --reps 1          # one quick run, fake LLM
-& ".\.venv\Scripts\python.exe" -m runner --llm ollama --reps 1 --max-minutes 60
+# Check the scenario files (no processes started)
+& ".\.venv\Scripts\python.exe" -m runner --dry-run
+
+# Fake LLM: scripted replies from the scenario file, a few seconds each.
+# Checks the whole pipeline (processes, messages, mock world, evaluation).
+& ".\.venv\Scripts\python.exe" -m runner --scenario N1 --scenario N3 --reps 1
+
+# Live LLM: start Ollama with llama3:8b first (LLM_BASE_URL, default
+# http://localhost:11434). CPU-only: about 2-4 minutes per scenario run
+# (worst case 35 s per LLM call, docs/measurements.md).
+& ".\.venv\Scripts\python.exe" -m runner --llm ollama --scenario N1 --reps 1 --max-minutes 30
+& ".\.venv\Scripts\python.exe" -m runner --llm ollama --scenario N3 --reps 1 --max-minutes 30
 ```
+
+Expected for the fake run: one line per scenario ending in
+`completed completed=True <ms> ms`, then the results folder. Open
+`results\<run_id>\summary.csv` for the table. A live run can fail where the
+fake one passes (the model may choose other actions); `results.csv` shows
+which criteria failed, and `results\<run_id>\<scenario>\...\processes\`
+holds each process's log.
 
 Scenario files go in `scenarios\` (one JSON file each). To debug a single
 agent by hand, start it with uvicorn as in the manual test above.
