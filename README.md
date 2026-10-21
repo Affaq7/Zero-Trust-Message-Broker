@@ -197,6 +197,28 @@ The sender is the wrapper's own `AGENT_NAME`. In `MODE=direct` the request
 goes straight to the receiver's `/message`; `MODE=broker` is not implemented
 yet and raises an error.
 
+## Mock services (the fake company the agents act on)
+
+One process, no LLM: a seeded SQLite database, a sandboxed file store,
+fixture web pages, a mail sink and an admin handler. Everything they do is
+appended to `logs\mocks.jsonl` (ground truth for the runner). Working copies
+live in `runtime\mocks\` and are rebuilt from the seed at startup and on
+`POST /reset`. All data is fictional.
+
+```powershell
+& ".\.venv\Scripts\python.exe" -m uvicorn mocks.main:app --host 127.0.0.1 --port 8090
+```
+
+Quick checks from a second terminal (from the repo root):
+
+```powershell
+curl.exe -s "http://127.0.0.1:8090/health"
+curl.exe -s -X POST "http://127.0.0.1:8090/db/query_aggregate" -H "Content-Type: application/json" --data-binary "@examples/mock_db_aggregate.json"
+curl.exe -s -X POST "http://127.0.0.1:8090/mail/send" -H "Content-Type: application/json" -H "X-Trace-Id: manual-1" --data-binary "@examples/mock_mail_a4.json"
+curl.exe -s "http://127.0.0.1:8090/ground-truth?trace_id=manual-1"
+curl.exe -s -X POST "http://127.0.0.1:8090/reset"
+```
+
 ## Message log
 
 Each wrapper appends every request it receives and every response it sends to

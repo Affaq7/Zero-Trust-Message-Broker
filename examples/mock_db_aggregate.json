@@ -1,0 +1,1 @@
+{"resource": "db:employees", "payload": {"metric": "count", "group_by": ["dept"]}}

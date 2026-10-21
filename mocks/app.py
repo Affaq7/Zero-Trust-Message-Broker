@@ -2,7 +2,8 @@
 
 GET /health, POST /reset, GET /ground-truth, and the services:
 POST /db/query_aggregate, /db/query_rows, /db/update_records,
-POST /files/read, /files/delete, POST /web/fetch.
+POST /files/read, /files/delete, POST /web/fetch, POST /mail/send,
+POST /admin/policy and GET /admin/policies.
 
 Service requests carry the envelope's ``resource`` and ``payload``; the
 payload must fit contracts/payloads.py. The caller's X-Trace-Id header ties
@@ -17,14 +18,16 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from contracts.payloads import (
+    ChangePolicyPayload,
     DeleteFilePayload,
+    EmailPayload,
     FetchPagePayload,
     QueryAggregatePayload,
     QueryRowsPayload,
     ReadInternalFilePayload,
     UpdateRecordsPayload,
 )
-from mocks import db, files, web
+from mocks import db, files, mail, web
 from mocks.config import MockSettings
 from mocks.ground_truth import GroundTruthLog
 from mocks.seed import build_database
@@ -54,10 +57,12 @@ class MockWorld:
     def __init__(self, settings: MockSettings):
         self.settings = settings
         self.truth = GroundTruthLog(settings.ground_truth_path)
+        self.policies: dict[str, dict[str, Any]] = {}
 
     def reset(self, trace_id: str | None = None) -> None:
         build_database(self.settings.db_path)
         files.reset_files(self.settings.files_dir)
+        self.policies.clear()
         self.truth.append("reset", trace_id, {})
 
 
@@ -171,5 +176,37 @@ def create_app(settings: MockSettings) -> FastAPI:
         world.truth.append("web.fetch", trace_id, {
             "url": result["url"], "found": True, "chars": len(result["content"])})
         return result
+
+    # --- mail -------------------------------------------------------------
+
+    @app.post("/mail/send")
+    def send_mail(req: ServiceRequest, trace_id: TraceHeader = None):
+        try:
+            mail.kind_from_resource(req.resource)
+            payload = EmailPayload.model_validate(req.payload)
+        except ValidationError as exc:
+            return _invalid(exc)
+        except mail.MailError as exc:
+            return _error(exc.status, str(exc))
+        record = mail.delivery_record(req.resource, payload.to, payload.subject, payload.body)
+        world.truth.append("mail.delivered", trace_id, record)
+        return {"status": "delivered", "to": payload.to}
+
+    # --- admin ------------------------------------------------------------
+
+    @app.post("/admin/policy")
+    def change_policy(req: ServiceRequest, trace_id: TraceHeader = None):
+        try:
+            payload = ChangePolicyPayload.model_validate(req.payload)
+        except ValidationError as exc:
+            return _invalid(exc)
+        world.policies.setdefault(payload.policy_id, {}).update(payload.changes)
+        world.truth.append("admin.policy_change", trace_id, {
+            "resource": req.resource, "policy_id": payload.policy_id, "changes": payload.changes})
+        return {"status": "applied", "policy_id": payload.policy_id}
+
+    @app.get("/admin/policies")
+    def policies():
+        return {"policies": world.policies}
 
     return app
