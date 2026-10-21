@@ -223,26 +223,39 @@ class OllamaLLM(LLMClient):
 
 
 class FakeLLM(LLMClient):
-    """Scripted replies: {"<purpose>": [reply, reply, ...]} consumed in order.
+    """Scripted replies per purpose, in one of two forms:
+
+    - a list: {"<purpose>": [reply, reply, ...]}, consumed in order;
+    - rules: {"<purpose>": {"rules": [{"if_prompt_contains": "...", "reply": ...}],
+      "default": reply}}. Rules are not consumed: the first rule whose text
+      occurs in the prompt wins, else the default. This keeps replies right
+      when several tasks share one agent process concurrently.
 
     A reply is a JSON object (dict) or a raw string (to test invalid output).
     """
 
-    def __init__(self, settings, agent_name, log_dir, script: dict[str, list] | None = None):
+    def __init__(self, settings, agent_name, log_dir, script: dict[str, Any] | None = None):
         super().__init__(settings, agent_name, log_dir)
         if script is None:
             if settings.fake_script is None:
                 raise LLMConfigError("FakeLLM needs a script")
             script = json.loads(Path(settings.fake_script).read_text(encoding="utf-8"))
-        self._script = {k: list(v) for k, v in script.items()}
+        self._script = {k: (dict(v) if isinstance(v, dict) else list(v)) for k, v in script.items()}
         self._lock = threading.Lock()
 
     def _chat(self, purpose, messages, schema):
-        with self._lock:
-            replies = self._script.get(purpose)
-            if not replies:
-                raise LLMOutputError(f"fake script has no (more) replies for {purpose!r}")
-            reply = replies.pop(0)
+        entry = self._script.get(purpose)
+        if isinstance(entry, dict):
+            prompt = "\n".join(m["content"] for m in messages)
+            reply = next((r["reply"] for r in entry.get("rules", [])
+                          if r["if_prompt_contains"] in prompt), entry.get("default"))
+            if reply is None:
+                raise LLMOutputError(f"fake script has no rule or default for {purpose!r}")
+        else:
+            with self._lock:
+                if not entry:
+                    raise LLMOutputError(f"fake script has no (more) replies for {purpose!r}")
+                reply = entry.pop(0)
         raw = reply if isinstance(reply, str) else json.dumps(reply)
         return raw, {"prompt_eval_count": None, "eval_count": None}
 

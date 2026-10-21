@@ -196,6 +196,19 @@ def test_fake_replies_in_order(tmp_path):
         ask(llm)
 
 
+def test_fake_rules_pick_by_prompt_and_are_not_consumed(tmp_path):
+    llm = fake(tmp_path, {"planner.plan": {
+        "rules": [{"if_prompt_contains": "second", "reply": {"action": "b", "reason": "rule"}}],
+        "default": {"action": "a", "reason": "default"}}})
+    assert [ask(llm, prompt=p).action for p in ("first", "second", "first", "second")] == ["a", "b", "a", "b"]
+
+
+def test_fake_rules_without_match_or_default(tmp_path):
+    llm = fake(tmp_path, {"planner.plan": {"rules": [{"if_prompt_contains": "x", "reply": {"action": "a", "reason": "r"}}]}})
+    with pytest.raises(LLMOutputError, match="no rule or default"):
+        ask(llm, prompt="nothing matches")
+
+
 def test_fake_validates_and_retries_like_ollama(tmp_path):
     llm = fake(tmp_path, {"planner.plan": ["garbage", {"action": "ok", "reason": "r"}]})
     assert ask(llm).action == "ok"
