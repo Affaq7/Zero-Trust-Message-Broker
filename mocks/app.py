@@ -1,17 +1,43 @@
-"""Mock-services FastAPI app: GET /health, POST /reset, GET /ground-truth.
+"""Mock-services FastAPI app.
 
-The app resets its world at startup, so every run starts from the seed.
+GET /health, POST /reset, GET /ground-truth, and the services:
+POST /db/query_aggregate, /db/query_rows, /db/update_records.
+
+Service requests carry the envelope's ``resource`` and ``payload``; the
+payload must fit contracts/payloads.py. The caller's X-Trace-Id header ties
+ground-truth records to a run. The app resets its world at startup.
 """
 
-from typing import Annotated
+import json
+from typing import Annotated, Any
 
 from fastapi import FastAPI, Header, Query
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, ValidationError
 
+from contracts.payloads import QueryAggregatePayload, QueryRowsPayload, UpdateRecordsPayload
+from mocks import db
 from mocks.config import MockSettings
 from mocks.ground_truth import GroundTruthLog
 from mocks.seed import build_database
 
 TraceHeader = Annotated[str | None, Header(alias="X-Trace-Id", max_length=128)]
+
+
+class ServiceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resource: str
+    payload: dict[str, Any] = {}
+
+
+def _error(status: int, message: str, **extra) -> JSONResponse:
+    return JSONResponse(status_code=status, content={"error": message, **extra})
+
+
+def _invalid(exc: ValidationError) -> JSONResponse:
+    details = json.loads(exc.json(include_url=False, include_input=False))
+    return _error(422, "invalid payload", details=details)
 
 
 class MockWorld:
@@ -50,5 +76,46 @@ def create_app(settings: MockSettings) -> FastAPI:
     ):
         return {"records": world.truth.read(trace_id=trace_id, kind=kind,
                                             since=since, until=until)}
+
+    # --- database ---------------------------------------------------------
+
+    def _db_read(action, schema, run, req: ServiceRequest, trace_id):
+        try:
+            payload = schema.model_validate(req.payload)
+            table = db.table_from_resource(req.resource)
+            result = run(world.settings.db_path, table, payload)
+        except ValidationError as exc:
+            return _invalid(exc)
+        except db.DbError as exc:
+            return _error(exc.status, str(exc))
+        columns = sorted({c for row in result["rows"] for c in row})
+        world.truth.append("db.query", trace_id, {
+            "action": action, "table": table, "columns": columns,
+            "filters": payload.filters, "row_count": len(result["rows"]),
+            "sensitive_columns": [] if action == "db.query_aggregate"
+            else db.sensitive_in(table, columns),
+        })
+        return result
+
+    @app.post("/db/query_aggregate")
+    def query_aggregate(req: ServiceRequest, trace_id: TraceHeader = None):
+        return _db_read("db.query_aggregate", QueryAggregatePayload, db.query_aggregate, req, trace_id)
+
+    @app.post("/db/query_rows")
+    def query_rows(req: ServiceRequest, trace_id: TraceHeader = None):
+        return _db_read("db.query_rows", QueryRowsPayload, db.query_rows, req, trace_id)
+
+    @app.post("/db/update_records")
+    def update_records(req: ServiceRequest, trace_id: TraceHeader = None):
+        try:
+            payload = UpdateRecordsPayload.model_validate(req.payload)
+            table = db.table_from_resource(req.resource)
+            result, details = db.update_records(world.settings.db_path, table, payload)
+        except ValidationError as exc:
+            return _invalid(exc)
+        except db.DbError as exc:
+            return _error(exc.status, str(exc))
+        world.truth.append("db.write", trace_id, details)
+        return result
 
     return app
