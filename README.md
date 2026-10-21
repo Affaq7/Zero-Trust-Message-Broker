@@ -30,6 +30,14 @@ py -3.12 -m venv ".venv"
 & ".\.venv\Scripts\python.exe" -m pytest
 ```
 
+Optional live LLM test (skipped by default; start Ollama with llama3:8b first):
+
+```powershell
+$env:RUN_OLLAMA_TESTS = "1"
+& ".\.venv\Scripts\python.exe" -m pytest -m ollama -v -s
+Remove-Item Env:RUN_OLLAMA_TESTS
+```
+
 Instead of the full paths you can activate the venv for the current shell
 with `& ".\.venv\Scripts\Activate.ps1"`. If PowerShell blocks the script, run
 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
