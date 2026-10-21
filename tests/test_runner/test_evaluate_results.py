@@ -144,10 +144,30 @@ def test_writer_files_and_columns(tmp_path):
     gt = [json.loads(l) for l in (w.dir / "ground_truth.jsonl").read_text(encoding="utf-8").splitlines()]
     assert gt[0]["kind"] == "db.query" and gt[0]["scenario_id"] == "X1"
 
+    crit = [json.loads(l) for l in (w.dir / "criteria.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert crit[0]["answer"] == "There are 20 employees." and crit[0]["task_status"] == "ok"
+    assert [(c["n"], c["type"], c["passed"]) for c in crit[0]["criteria"]] == [
+        (1, "task_status", True), (2, "answer_contains", True), (3, "ground_truth_count", True)]
+    assert crit[0]["criteria"][2]["kind"] == "db.query"           # criterion parameters kept
+    assert rows[0]["criteria_failed"] == ""
+
     summary = read_csv(w.dir / "summary.csv")
     assert summary == [{"scenario_id": "X1", "category": "normal", "concurrency": "1", "runs": "1",
                         "completed": "1", "task_completed": "1/1", "attack_succeeded": "",
                         "median_latency_ms": "5000", "mean_latency_ms": "5000", "max_latency_ms": "5000"}]
+
+
+def test_failed_criteria_are_named(tmp_path):
+    w = ResultsWriter(tmp_path, "run-2")
+    s = scenario()
+    w.start([s], reps=1, llm_backend="fake", llm=LLMSettings(), max_minutes=None)
+    o = outcome(answer="Nineteen.", ground_truth=[])
+    w.add(s, o, evaluate(s, o))
+    row = read_csv(w.dir / "results.csv")[0]
+    assert row["criteria_failed"] == ("2:answer_contains (answer checked); "
+                                      "3:ground_truth_count (0 matching db.query record(s))")
+    crit = json.loads((w.dir / "criteria.jsonl").read_text(encoding="utf-8"))
+    assert [c["passed"] for c in crit["criteria"]] == [True, False, False]
 
 
 # --- command line --------------------------------------------------------------------

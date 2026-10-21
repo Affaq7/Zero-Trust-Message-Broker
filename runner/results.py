@@ -4,6 +4,7 @@
 - results.csv        one row per (scenario, repetition, concurrency, slot)
 - events.jsonl       one row per logged envelope (no payloads)
 - ground_truth.jsonl the mock services' records for each trace
+- criteria.jsonl     per outcome: the final answer and every criterion's result
 - summary.csv        per scenario and concurrency: runs, completion, latency
 
 Rows are appended as soon as a repetition ends, so an interrupted run keeps
@@ -30,7 +31,7 @@ COLUMNS = [
     "run_id", "scenario_id", "category", "baseline", "rep", "concurrency", "slot", "trace_id",
     "started_at", "ended_at", "e2e_latency_ms", "status", "task_status", "task_completed",
     "attack_succeeded", "over_exposure", "sensitive_hits", "messages", "llm_calls", "llm_time_ms",
-    "criteria_passed", "criteria_total", "expected_decision", "broker_decision", "detected",
+    "criteria_passed", "criteria_total", "criteria_failed", "expected_decision", "broker_decision", "detected",
     "not_applicable_reason", "error",
 ]
 SUMMARY_COLUMNS = ["scenario_id", "category", "concurrency", "runs", "completed", "task_completed",
@@ -126,8 +127,16 @@ class ResultsWriter:
             "llm_calls": len(o.llm_calls),
             "llm_time_ms": sum(c.get("duration_ms", 0) for c in o.llm_calls),
             "criteria_passed": ev.passed, "criteria_total": len(ev.criteria),
+            "criteria_failed": "; ".join(f"{i}:{c['type']} ({c['detail']})"
+                                         for i, c in enumerate(ev.criteria, 1) if not c["passed"]),
             "expected_decision": scenario.expected_decision, "error": o.error,
         })
+        self._append_jsonl("criteria.jsonl", [{
+            **ids, "status": o.status, "task_status": o.task_status, "answer": o.answer,
+            "criteria": [{"n": i, **crit.model_dump(exclude_none=True), "passed": c["passed"],
+                          "detail": c["detail"]}
+                         for i, (crit, c) in enumerate(zip(scenario.success_criteria, ev.criteria), 1)],
+        }])
         self._append_jsonl("events.jsonl", [{
             **ids, "logged_at": e["logged_at"], "logged_by": e["logged_by"], "direction": e["direction"],
             **{k: e["envelope"].get(k) for k in ("msg_id", "parent_msg_id", "msg_type", "sender",

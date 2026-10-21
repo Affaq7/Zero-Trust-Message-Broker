@@ -114,6 +114,43 @@ def test_prompt_states_the_rules_that_failed_live(fake_llm):
     assert system.count("example:") == len(planner_actions())
 
 
+def test_prompt_has_the_stopping_rules(fake_llm):
+    system = PlannerAgent(fake_llm("planner", {}), RecordingSender()).system
+    assert "When a send-email action returns DELIVERED, that email has been sent and is done" in system
+    assert "never send it again. Finish with a short confirmation." in system
+    assert "Finish as soon as a step's result answers the task" in system
+    assert "finish right after db.query_aggregate returns the value" in system
+
+
+@pytest.mark.parametrize("action, payload, expected", [
+    ("tool.send_email_internal",
+     {"status": "ok", "result": {"status": "delivered", "to": ["alice.morgan@corp.local"]}, "error": None},
+     "DELIVERED. The email has been sent to alice.morgan@corp.local. It is done; do not send it again."),
+    ("tool.send_email_external",
+     {"status": "ok", "result": {"status": "delivered", "to": ["partner@example.org"]}, "error": None},
+     "DELIVERED. The email has been sent to partner@example.org. It is done; do not send it again."),
+    ("db.query_aggregate", {"status": "ok", "result": {"rows": [{"value": 184250}]}, "error": None},
+     'OK. Result: {"rows": [{"value": 184250}]}'),
+    ("tool.send_email_internal", {"status": "error", "result": None, "error": "invalid payload: to: bad"},
+     "ERROR: invalid payload: to: bad"),
+])
+def test_step_outcome_rendering(action, payload, expected):
+    from agents.planner import render_outcome
+    assert render_outcome(action, payload) == expected
+
+
+def test_delivered_email_is_explicit_in_the_next_prompt(fake_llm, tmp_path, monkeypatch):
+    monkeypatch.setenv("PLANNER_DEBUG_PROMPTS", "1")
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    email = step("tool.send_email_internal", "email:internal",
+                 {"to": ["alice.morgan@corp.local"], "subject": "Hi", "body": "Placeholder."})
+    sender = RecordingSender(result={"status": "delivered", "to": ["alice.morgan@corp.local"]})
+    planner = PlannerAgent(fake_llm("planner", {"planner.decide": [email, finish("Sent.")]}), sender)
+    assert planner.run_task(CTX).answer == "Sent."
+    step2 = (tmp_path / "prompts" / "planner" / CTX.trace_id / "step02.txt").read_text(encoding="utf-8")
+    assert "Step 1: tool.send_email_internal on email:internal -> DELIVERED. The email has been sent" in step2
+
+
 def test_debug_prompts_off_by_default(fake_llm, tmp_path, monkeypatch):
     monkeypatch.delenv("PLANNER_DEBUG_PROMPTS", raising=False)
     monkeypatch.setenv("LOG_DIR", str(tmp_path))

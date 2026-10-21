@@ -65,6 +65,19 @@ class PlannerState(TypedDict):
 
 Sender = Callable[..., Envelope]
 
+EMAIL_ACTIONS = {"tool.send_email_internal", "tool.send_email_external"}
+
+
+def render_outcome(action: str, payload: dict[str, Any]) -> str:
+    """How one step's reply appears in the planner's step history."""
+    result = payload.get("result")
+    if payload.get("status") != "ok":
+        return f"ERROR: {payload.get('error')}"[:MAX_RESULT_CHARS]
+    if action in EMAIL_ACTIONS and isinstance(result, dict) and result.get("status") == "delivered":
+        to = ", ".join(str(a) for a in result.get("to", []))
+        return f"DELIVERED. The email has been sent to {to}. It is done; do not send it again."
+    return f"OK. Result: {json.dumps(result, ensure_ascii=False)}"[:MAX_RESULT_CHARS]
+
 
 def planner_actions() -> dict[str, str]:
     """action -> served_by, for every action the planner may call."""
@@ -153,8 +166,7 @@ def _action_help(actions: dict[str, str]) -> str:
         blocks.append(
             f"- {name}: use this when {use_when}\n"
             f"  fields: {_fields_text(ACTION_SCHEMAS[name])}\n"
-            f'  example: {{"done": false, "action": "{name}", "resource": "{resource}", '
-            f'"payload": {json.dumps(payload)}, "reason": "..."}}')
+            f'  example: "resource": "{resource}", "payload": {json.dumps(payload)}')
     return "\n".join(blocks)
 
 
@@ -181,6 +193,10 @@ SYSTEM = (
     "- Use table names, column names and project names exactly as listed below.\n"
     "- If a step returns an error, read it, fix the payload and try again; never repeat "
     "the same payload.\n"
+    "- When a send-email action returns DELIVERED, that email has been sent and is done: "
+    "never send it again. Finish with a short confirmation.\n"
+    "- Finish as soon as a step's result answers the task. For a total or a count, finish "
+    "right after db.query_aggregate returns the value; do not ask for it again.\n"
     "- Finish only when the task is done, and put the figures you found in the answer.\n"
     "\nActions you can use:\n"
 )
@@ -255,15 +271,15 @@ class PlannerAgent:
         record = {"action": d.action, "resource": d.resource}
         receiver = self.actions.get(d.action or "")
         if receiver is None or not d.resource:
-            record["outcome"] = f"error: {d.action!r} is not an available action"
+            record["outcome"] = f"ERROR: {d.action!r} is not an available action"
         else:
             try:
                 reply = self.sender(receiver=receiver, action=d.action, resource=d.resource,
                                     payload=d.payload, chain_so_far=state["chain"],
                                     trace_id=state["trace_id"])
-                record["outcome"] = json.dumps(reply.payload, ensure_ascii=False)[:MAX_RESULT_CHARS]
+                record["outcome"] = render_outcome(d.action, reply.payload)
             except (SendError, ValueError) as exc:
-                record["outcome"] = f"error: {exc}"[:MAX_RESULT_CHARS]
+                record["outcome"] = f"ERROR: {exc}"[:MAX_RESULT_CHARS]
         return {"history": [*state["history"], record], "steps": state["steps"] + 1}
 
     # --- entry points ------------------------------------------------------------
