@@ -1,5 +1,7 @@
 """M2 step 11: planner agent (LangGraph) with the fake LLM and a recording sender."""
 
+import json
+
 import pytest
 
 from agents.base import TaskContext
@@ -151,6 +153,69 @@ def test_delivered_email_is_explicit_in_the_next_prompt(fake_llm, tmp_path, monk
     assert "Step 1: tool.send_email_internal on email:internal -> DELIVERED. The email has been sent" in step2
 
 
+def test_prompt_has_the_action_name_rule(fake_llm):
+    system = PlannerAgent(fake_llm("planner", {}), RecordingSender()).system
+    assert "Action names use a dot exactly as listed (db.query_aggregate); db: is only for resources." in system
+
+
+def _last_line(planner, history, steps=None):
+    state = {"task": CTX.task, "trace_id": "t", "chain": ["user"], "history": history,
+             "steps": len(history) if steps is None else steps, "decision": None,
+             "answer": None, "error": None}
+    return planner._prompt(state).splitlines()[-1]
+
+
+AFTER_SUCCESS = ('If the results above answer the task, reply {"done": true, "answer": "..."} now. '
+                 "Otherwise choose the next action.")
+OK_STEP = {"action": "db.query_aggregate", "resource": "db:project_costs",
+           "outcome": 'OK. Result: {"rows": [{"value": 184250}]}'}
+DELIVERED_STEP = {"action": "tool.send_email_internal", "resource": "email:internal",
+                  "outcome": "DELIVERED. The email has been sent to alice.morgan@corp.local. "
+                             "It is done; do not send it again."}
+ERROR_STEP = {"action": "db:query_aggregate", "resource": "db:project_costs",
+              "outcome": "ERROR: 'db:query_aggregate' is not an available action"}
+
+
+@pytest.mark.parametrize("history, expected", [
+    ([], "Choose the next action, or finish."),                     # first step
+    ([OK_STEP], AFTER_SUCCESS),
+    ([DELIVERED_STEP], AFTER_SUCCESS),
+    ([ERROR_STEP], "Choose the next action, or finish."),           # after an error: unchanged
+    ([ERROR_STEP, OK_STEP], AFTER_SUCCESS),                          # only the last step counts
+    ([OK_STEP, ERROR_STEP], "Choose the next action, or finish."),
+])
+def test_closing_line_depends_on_the_last_step(fake_llm, history, expected):
+    planner = PlannerAgent(fake_llm("planner", {}), RecordingSender())
+    assert _last_line(planner, history) == expected
+
+
+def test_step_limit_line_still_wins(fake_llm):
+    planner = PlannerAgent(fake_llm("planner", {}), RecordingSender(), max_steps=1)
+    assert _last_line(planner, [OK_STEP]) == "You have used all your steps. Finish now with the final answer."
+
+
+def test_debug_saves_each_reply_next_to_its_prompt(fake_llm, tmp_path, monkeypatch):
+    monkeypatch.setenv("PLANNER_DEBUG_PROMPTS", "1")
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    planner = PlannerAgent(fake_llm("planner", {"planner.decide": [COUNT, finish("20")]}), RecordingSender())
+    planner.run_task(CTX)
+    folder = tmp_path / "prompts" / "planner" / CTX.trace_id
+    first = json.loads((folder / "step01.reply.json").read_text(encoding="utf-8"))
+    assert (first["done"], first["action"], first["payload"]) == (False, "db.query_aggregate", {"metric": "count"})
+    second = json.loads((folder / "step02.reply.json").read_text(encoding="utf-8"))
+    assert (second["done"], second["answer"]) == (True, "20")
+    assert AFTER_SUCCESS in (folder / "step02.txt").read_text(encoding="utf-8")
+
+
+def test_debug_saves_the_error_when_the_llm_fails(fake_llm, tmp_path, monkeypatch):
+    monkeypatch.setenv("PLANNER_DEBUG_PROMPTS", "1")
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    planner = PlannerAgent(fake_llm("planner", {"planner.decide": ["not json", "still not json"]}), RecordingSender())
+    assert planner.run_task(CTX).status == "error"
+    reply = json.loads((tmp_path / "prompts" / "planner" / CTX.trace_id / "step01.reply.json").read_text(encoding="utf-8"))
+    assert reply["error"].startswith("LLMOutputError")
+
+
 def test_debug_prompts_off_by_default(fake_llm, tmp_path, monkeypatch):
     monkeypatch.delenv("PLANNER_DEBUG_PROMPTS", raising=False)
     monkeypatch.setenv("LOG_DIR", str(tmp_path))
@@ -165,7 +230,8 @@ def test_debug_prompts_written_per_step(fake_llm, tmp_path, monkeypatch):
     planner = PlannerAgent(fake_llm("planner", {"planner.decide": [COUNT, finish("20")]}), RecordingSender())
     planner.run_task(CTX)
     folder = tmp_path / "prompts" / "planner" / CTX.trace_id
-    assert sorted(p.name for p in folder.iterdir()) == ["step01.txt", "step02.txt"]
+    assert sorted(p.name for p in folder.iterdir()) == [
+        "step01.reply.json", "step01.txt", "step02.reply.json", "step02.txt"]
     step2 = (folder / "step02.txt").read_text(encoding="utf-8")
     assert step2.startswith("--- SYSTEM ---") and "--- USER ---" in step2
     assert "User task: How many employees are there?" in step2 and "Step 1: db.query_aggregate" in step2

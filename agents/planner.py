@@ -67,6 +67,10 @@ Sender = Callable[..., Envelope]
 
 EMAIL_ACTIONS = {"tool.send_email_internal", "tool.send_email_external"}
 
+# Closing line of the prompt when the previous step succeeded.
+AFTER_SUCCESS = ('If the results above answer the task, reply {"done": true, "answer": "..."} now. '
+                 "Otherwise choose the next action.")
+
 
 def render_outcome(action: str, payload: dict[str, Any]) -> str:
     """How one step's reply appears in the planner's step history."""
@@ -191,6 +195,7 @@ SYSTEM = (
     "need one result per group.\n"
     "- metric is lowercase: count, sum, avg, min or max. column is the column it applies to.\n"
     "- Use table names, column names and project names exactly as listed below.\n"
+    "- Action names use a dot exactly as listed (db.query_aggregate); db: is only for resources.\n"
     "- If a step returns an error, read it, fix the payload and try again; never repeat "
     "the same payload.\n"
     "- When a send-email action returns DELIVERED, that email has been sent and is done: "
@@ -211,8 +216,9 @@ class PlannerAgent:
         self.system = SYSTEM + _action_help(self.actions) + "\n\nCompany database tables:\n" + _data_help()
         self.graph = self._build()
         # Opt-in debug: PLANNER_DEBUG_PROMPTS=1 writes each step's full prompt to
-        # <LOG_DIR>/prompts/planner/<trace_id>/stepNN.txt. Off by default; the
-        # files can contain whatever earlier steps returned.
+        # <LOG_DIR>/prompts/planner/<trace_id>/stepNN.txt and the model's reply
+        # to stepNN.reply.json. Off by default; the files can contain whatever
+        # earlier steps returned.
         self.debug_dir: Path | None = None
         if os.environ.get("PLANNER_DEBUG_PROMPTS", "").strip() == "1":
             log_dir = os.environ.get("LOG_DIR", "").strip()
@@ -241,15 +247,24 @@ class PlannerAgent:
             parts.append(f"Step {i}: {h['action']} on {h['resource']} -> {h['outcome']}")
         if state["steps"] >= self.max_steps:
             parts.append("You have used all your steps. Finish now with the final answer.")
+        elif state["history"] and not state["history"][-1]["outcome"].startswith("ERROR"):
+            parts.append(AFTER_SUCCESS)
         else:
             parts.append("Choose the next action, or finish.")
         return "\n".join(parts)
 
-    def _write_debug_prompt(self, state: PlannerState, prompt: str) -> None:
+    def _debug_path(self, state: PlannerState, suffix: str) -> Path:
         folder = self.debug_dir / state["trace_id"]
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / f"step{state['steps'] + 1:02d}.txt").write_text(
+        return folder / f"step{state['steps'] + 1:02d}{suffix}"
+
+    def _write_debug_prompt(self, state: PlannerState, prompt: str) -> None:
+        self._debug_path(state, ".txt").write_text(
             f"--- SYSTEM ---\n{self.system}\n\n--- USER ---\n{prompt}\n", encoding="utf-8")
+
+    def _write_debug_reply(self, state: PlannerState, reply: dict[str, Any]) -> None:
+        self._debug_path(state, ".reply.json").write_text(
+            json.dumps(reply, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _decide(self, state: PlannerState) -> dict:
         prompt = self._prompt(state)
@@ -259,7 +274,11 @@ class PlannerAgent:
             decision = self.llm.decide(purpose="planner.decide", system=self.system,
                                        prompt=prompt, schema=PlannerDecision)
         except LLMError as exc:
+            if self.debug_dir is not None:
+                self._write_debug_reply(state, {"error": f"{type(exc).__name__}: {exc}"[:500]})
             return {"error": f"planner LLM failed: {exc}"[:500]}
+        if self.debug_dir is not None:
+            self._write_debug_reply(state, decision.model_dump())
         if decision.done:
             return {"answer": decision.answer or "", "decision": decision}
         if state["steps"] >= self.max_steps:
