@@ -239,6 +239,24 @@ curl.exe -s "http://127.0.0.1:8090/ground-truth?trace_id=manual-1"
 curl.exe -s -X POST "http://127.0.0.1:8090/reset"
 ```
 
+## Scenario runner
+
+The runner starts the mock services and the agents of each scenario as
+separate processes, sends the task, collects envelopes, ground truth and
+LLM calls, evaluates the success criteria and writes `results\<run_id>\`
+(gitignored): `run_meta.json`, `results.csv`, `events.jsonl`,
+`ground_truth.jsonl`, `summary.csv`. All processes are stopped afterwards,
+also after Ctrl+C.
+
+```powershell
+& ".\.venv\Scripts\python.exe" -m runner --dry-run                       # check scenario files
+& ".\.venv\Scripts\python.exe" -m runner --scenario N1 --reps 1          # one quick run, fake LLM
+& ".\.venv\Scripts\python.exe" -m runner --llm ollama --reps 1 --max-minutes 60
+```
+
+Scenario files go in `scenarios\` (one JSON file each). To debug a single
+agent by hand, start it with uvicorn as in the manual test above.
+
 ## Message log
 
 Each wrapper appends every request it receives and every response it sends to

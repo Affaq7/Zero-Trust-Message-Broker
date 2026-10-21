@@ -19,6 +19,9 @@ keys/
 # Runtime message logs
 logs/
 
+# Raw run output (only run_meta, summaries and the final baseline get committed, M7)
+results/
+
 # Mock-services working copies (rebuilt from the seed on every reset)
 runtime/
 
