@@ -13,8 +13,8 @@ The repo path contains a space, so always quote paths. All commands below are
 run from the repo root.
 
 ```powershell
-# 0. Go to the repo root
-Set-Location "C:\Users\Haroon Traders\Desktop\FYP\zt-broker-testbed"
+# 0. Work from the repo root (VS Code terminals open there; otherwise Set-Location to it)
+Get-Location   # must print the repo root (the zt-broker-testbed folder)
 
 # 1. Create the virtual environment (once)
 py -3.12 -m venv ".venv"
@@ -63,7 +63,7 @@ If you get an error or nothing, the terminal is cmd or Git Bash: pick
 ### 1. Terminal 1: start the dummy agent
 
 ```powershell
-Set-Location "C:\Users\Haroon Traders\Desktop\FYP\zt-broker-testbed"
+Get-Location   # must print the repo root (the zt-broker-testbed folder)
 & ".\.venv\Scripts\python.exe" -c "import sys; print(sys.prefix)"
 $env:MODE = "direct"
 $env:AGENT_NAME = "dummy"
@@ -86,7 +86,7 @@ Leave this terminal running. Each request appears here as one line, e.g.
 ### 2. Terminal 2: send requests
 
 ```powershell
-Set-Location "C:\Users\Haroon Traders\Desktop\FYP\zt-broker-testbed"
+Get-Location   # must print the repo root (the zt-broker-testbed folder)
 
 # a) Health check
 curl.exe -s "http://127.0.0.1:8001/health"
@@ -143,8 +143,8 @@ one-line JSON.
 # d) Invalid body: expect the error JSON, then "HTTP 422"
 curl.exe -s -w "`nHTTP %{http_code}`n" -X POST "http://127.0.0.1:8001/message" -H "Content-Type: application/json" --data-binary "not json"
 
-# e) Same request with an absolute path containing a space: expect "HTTP 200"
-curl.exe -s -o NUL -w "HTTP %{http_code}`n" -X POST "http://127.0.0.1:8001/message" -H "Content-Type: application/json" --data-binary "@C:\Users\Haroon Traders\Desktop\FYP\zt-broker-testbed\examples\dummy_request.json"
+# e) Same request with the absolute path ($PWD = repo root, which contains a space): expect "HTTP 200"
+curl.exe -s -o NUL -w "HTTP %{http_code}`n" -X POST "http://127.0.0.1:8001/message" -H "Content-Type: application/json" --data-binary "@$PWD\examples\dummy_request.json"
 ```
 
 ```powershell

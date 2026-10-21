@@ -62,8 +62,9 @@ from the operator-set environment only.
 - .env is gitignored; only .env.example (no secrets) is committed.
 
 ## Repo path contains a space
-The repo lives at "C:\Users\Haroon Traders\Desktop\FYP\zt-broker-testbed".
-Do not move it. Quote every path in commands, scripts and docs. In code, build
+The repo's absolute path contains a space. Do not move it, and do not write
+the absolute path (it contains the user's Windows username) into the repo:
+docs say "from the repo root". Quote every path in commands, scripts and docs. In code, build
 paths with pathlib relative to the file (never hard-code the absolute path).
 
 ## Virtual environment (required)
@@ -89,7 +90,15 @@ paths with pathlib relative to the file (never hard-code the absolute path).
 - Small steps, each with a pytest test, one commit per step.
 - Plan first and wait for approval before large changes.
 - When something is unclear, ask instead of guessing.
-- Do not push and do not add a git remote unless the user asks.
+- Remote: origin = https://github.com/Affaq7/Zero-Trust-Message-Broker.git (private), branch main.
+- After each step the user approves: scan the commits about to be pushed for
+  secrets (.env, keys/, *.pem/*.key, logs/, tokens, credentials), then
+  `git push` only if clean. Never force-push, never rewrite history, never put
+  a token or password in a URL or file. If a push is rejected, the remote has
+  new commits, or the scan hits: stop and tell the user. Pushing never replaces
+  the user's approval for changes to contracts/.
+- Throwaway files made only to try something out go in scratch/ (gitignored).
+  Real tests, including tests/test_smoke.py, stay tracked.
 
 ## Milestone 1 steps
 0. Bootstrap: git, .venv, pyproject, .gitignore, .env.example, docs
