@@ -183,6 +183,27 @@ def test_call_log_has_stats_but_no_prompt_text(tmp_path):
     assert "SECRET-PROMPT-TEXT" not in text and "900-11-1113" not in text
 
 
+def test_call_log_records_the_current_trace_id(tmp_path):
+    from agents.llm import reset_call_trace, set_call_trace
+    rec = Recorder(ollama_reply('{"action": "a", "reason": "b"}'), ollama_reply('{"action": "a", "reason": "b"}'))
+    llm = ollama(tmp_path, rec)
+    token = set_call_trace("trace-abc")
+    try:
+        ask(llm)
+    finally:
+        reset_call_trace(token)
+    ask(llm)                                           # outside any wrapper call
+    assert [line["trace_id"] for line in log_lines(tmp_path)] == ["trace-abc", None]
+
+
+def test_wrapper_runtime_sets_the_trace_for_llm_calls(tmp_path):
+    from wrapper.runtime import AgentRuntime, run_with_runtime
+    llm = FakeLLM(LLMSettings(backend="fake"), "planner", tmp_path,
+                  script={"planner.plan": [{"action": "a", "reason": "b"}]})
+    run_with_runtime(AgentRuntime.create("planner", "planner"), ask, llm, trace_id="trace-xyz")
+    assert log_lines(tmp_path)[-1]["trace_id"] == "trace-xyz"
+
+
 # --- fake backend ----------------------------------------------------------------------
 
 def fake(tmp_path, script, **settings):

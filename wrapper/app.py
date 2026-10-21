@@ -84,7 +84,7 @@ def create_app(settings: Settings) -> FastAPI:
             return _error(400, "POST /message accepts requests only")
 
         try:
-            payload = await run_in_threadpool(run_with_runtime, runtime, agent, env)
+            payload = await run_in_threadpool(run_with_runtime, runtime, agent, env, trace_id=env.trace_id)
         except Exception:
             log.exception("agent %s failed on msg %s", settings.agent_name, env.msg_id)
             payload = ResponsePayload(status="error", error="agent failed")
@@ -105,7 +105,8 @@ def create_app(settings: Settings) -> FastAPI:
 
         ctx = TaskContext(task=req.task, trace_id=req.trace_id or new_id())
         try:
-            result = await run_in_threadpool(run_with_runtime, runtime, task_handler, ctx)
+            result = await run_in_threadpool(run_with_runtime, runtime, task_handler, ctx,
+                                             trace_id=ctx.trace_id)
         except Exception as exc:
             log.exception("agent %s failed on task %s", settings.agent_name, ctx.trace_id)
             result = TaskResult(status="error", error=f"agent failed: {type(exc).__name__}")

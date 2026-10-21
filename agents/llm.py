@@ -20,6 +20,7 @@ import os
 import threading
 import time
 from collections.abc import Mapping
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -122,15 +123,32 @@ def estimate_tokens(*texts: str) -> int:
     return sum(math.ceil(len(t) / CHARS_PER_TOKEN) + MESSAGE_OVERHEAD_TOKENS for t in texts)
 
 
+# trace_id of the message or task being handled, set by the wrapper around each
+# agent call, so every LLM call can be matched to its task exactly.
+_call_trace: ContextVar[str | None] = ContextVar("llm_call_trace", default=None)
+
+
+def set_call_trace(trace_id: str | None) -> Token:
+    return _call_trace.set(trace_id)
+
+
+def reset_call_trace(token: Token) -> None:
+    _call_trace.reset(token)
+
+
 class LLMCallLog:
-    """logs/llm/<agent>.jsonl: one line per call, no prompt text."""
+    """logs/llm/<agent>.jsonl: one line per call, no prompt text.
+
+    Each line carries the trace_id of the message or task being handled
+    (null for calls made outside a wrapper call)."""
 
     def __init__(self, log_dir: Path, agent_name: str):
         self.path = Path(log_dir) / "llm" / f"{agent_name}.jsonl"
         self._lock = threading.Lock()
 
     def append(self, record: dict[str, Any]) -> None:
-        record = {"logged_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), **record}
+        record = {"logged_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                  "trace_id": _call_trace.get(), **record}
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.path, "a", encoding="utf-8") as f:

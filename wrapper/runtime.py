@@ -8,6 +8,7 @@ MODE, no scenario labels and no trust scores.
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
+from agents.llm import reset_call_trace, set_call_trace
 from wrapper.credentials import StubCredentials
 
 
@@ -41,10 +42,13 @@ def current_runtime() -> AgentRuntime:
     return runtime
 
 
-def run_with_runtime(runtime: AgentRuntime, fn, *args):
-    """Call fn(*args) with ``runtime`` as the current runtime (used in worker threads)."""
+def run_with_runtime(runtime: AgentRuntime, fn, *args, trace_id: str | None = None):
+    """Call fn(*args) with ``runtime`` as the current runtime and ``trace_id``
+    as the trace of every LLM call made during it (used in worker threads)."""
     token = _current.set(runtime)
+    trace_token = set_call_trace(trace_id)
     try:
         return fn(*args)
     finally:
+        reset_call_trace(trace_token)
         _current.reset(token)

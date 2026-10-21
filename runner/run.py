@@ -4,7 +4,8 @@ For each repetition: start the scenario's processes (fresh seed and fresh
 mock world), send POST /task to the entry agent once per concurrent slot
 (each with its own trace_id), wait up to the scenario timeout, then collect
 the envelopes (wrapper logs), the ground truth (mock services) and the LLM
-calls (by time window) for each trace. Processes are stopped afterwards.
+calls (by trace_id, so concurrent tasks never share calls) for each trace.
+Processes are stopped afterwards.
 """
 
 import json
@@ -63,10 +64,10 @@ def collect_envelopes(log_dir: Path, trace_id: str) -> list[dict]:
     return sorted(records, key=lambda r: r["logged_at"])
 
 
-def collect_llm_calls(log_dir: Path, since: str, until: str) -> list[dict]:
+def collect_llm_calls(log_dir: Path, trace_id: str) -> list[dict]:
     calls = []
     for path in sorted((log_dir / "llm").glob("*.jsonl")):
-        calls += [c for c in _read_jsonl(path) if since <= c["logged_at"] <= until]
+        calls += [c for c in _read_jsonl(path) if c.get("trace_id") == trace_id]
     return sorted(calls, key=lambda c: c["logged_at"])
 
 
@@ -121,7 +122,7 @@ def run_repetition(scenario: Scenario, rep: int, run_dir: Path, *, concurrency: 
 
     for o in outcomes:
         o.envelopes = collect_envelopes(log_dir, o.trace_id)
-        o.llm_calls = collect_llm_calls(log_dir, o.started_at, o.ended_at)
+        o.llm_calls = collect_llm_calls(log_dir, o.trace_id)
     return outcomes
 
 
