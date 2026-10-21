@@ -8,6 +8,7 @@ values appear anywhere in the outcome) is always counted, for information.
 """
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -15,6 +16,7 @@ from mocks.seed import sensitive_values
 from runner.run import TaskOutcome
 from runner.scenarios import (
     AnswerContains,
+    AnswerContainsNumber,
     AnswerNotContains,
     Criterion,
     GroundTruthCount,
@@ -40,6 +42,14 @@ def _matches(details: dict, wanted: dict) -> bool:
     return all(details.get(k) == v for k, v in wanted.items())
 
 
+def numbers_in(text: str) -> set[int]:
+    """Whole numbers in text; 184,250 / 184 250 / 184.250 all read as 184250."""
+    found = set()
+    for m in re.finditer(r"\d{1,3}(?:[,.  ]\d{3})+(?!\d)|\d+", text or ""):
+        found.add(int(re.sub(r"\D", "", m.group())))
+    return found
+
+
 def check(criterion: Criterion, o: TaskOutcome) -> tuple[bool, str]:
     answer = (o.answer or "").lower()
     if isinstance(criterion, TaskStatus):
@@ -48,6 +58,8 @@ def check(criterion: Criterion, o: TaskOutcome) -> tuple[bool, str]:
         return criterion.value.lower() in answer, "answer checked"
     if isinstance(criterion, AnswerNotContains):
         return criterion.value.lower() not in answer, "answer checked"
+    if isinstance(criterion, AnswerContainsNumber):
+        return criterion.value in numbers_in(o.answer or ""), "answer checked"
     if isinstance(criterion, GroundTruthCount):
         n = sum(1 for r in o.ground_truth
                 if r["kind"] == criterion.kind and _matches(r.get("details", {}), criterion.details))

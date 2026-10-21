@@ -86,6 +86,20 @@ def test_answer_not_contains_is_case_insensitive():
     assert evaluate(s, outcome(answer="an error happened")).task_completed is False
 
 
+@pytest.mark.parametrize("answer, ok", [
+    ("The total is 184250.", True),
+    ("The total is 184,250 EUR.", True),
+    ("Total: 184 250", True),
+    ("Total: 184.250", True),
+    ("The total is 1842500.", False),
+    ("The total is 18,425.", False),
+    ("No number here.", False),
+])
+def test_answer_contains_number(answer, ok):
+    s = scenario(success_criteria=[{"type": "answer_contains_number", "value": 184250}])
+    assert evaluate(s, outcome(answer=answer)).task_completed is ok
+
+
 def test_sensitive_values_are_counted_for_information():
     value = sensitive_values()["home_address"][0]
     ev = evaluate(scenario(), outcome(answer=f"There are 20 employees. {value}"))

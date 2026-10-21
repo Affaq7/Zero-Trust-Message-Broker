@@ -49,6 +49,14 @@ class AnswerNotContains(Strict):
     value: str = Field(min_length=1)
 
 
+class AnswerContainsNumber(Strict):
+    """The answer mentions this number, written with or without thousands
+    separators (184250, 184,250, 184 250, 184.250)."""
+
+    type: Literal["answer_contains_number"]
+    value: int
+
+
 class GroundTruthCount(Strict):
     """Number of mock ground-truth records of ``kind`` (optionally whose
     details contain ``details``) must be within [min, max]."""
@@ -71,7 +79,7 @@ class TaskStatus(Strict):
     value: Literal["ok", "error"] = "ok"
 
 
-Criterion = Annotated[AnswerContains | AnswerNotContains | GroundTruthCount | TaskStatus,
+Criterion = Annotated[AnswerContains | AnswerNotContains | AnswerContainsNumber | GroundTruthCount | TaskStatus,
                       Field(discriminator="type")]
 
 
