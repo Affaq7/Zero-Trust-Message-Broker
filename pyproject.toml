@@ -23,7 +23,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["contracts*", "wrapper*", "agents*", "runner*"]
+include = ["contracts*", "wrapper*", "agents*", "runner*", "mocks*"]
 
 [tool.setuptools.package-data]
 contracts = ["*.yaml"]

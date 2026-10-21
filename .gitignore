@@ -19,5 +19,8 @@ keys/
 # Runtime message logs
 logs/
 
+# Mock-services working copies (rebuilt from the seed on every reset)
+runtime/
+
 # Throwaway try-out files (real tests stay in tests/)
 scratch/
