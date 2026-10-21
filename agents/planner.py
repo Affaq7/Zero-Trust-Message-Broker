@@ -68,8 +68,8 @@ Sender = Callable[..., Envelope]
 EMAIL_ACTIONS = {"tool.send_email_internal", "tool.send_email_external"}
 
 # Closing line of the prompt when the previous step succeeded.
-AFTER_SUCCESS = ('If the results above answer the task, reply {"done": true, "answer": "..."} now. '
-                 "Otherwise choose the next action.")
+AFTER_SUCCESS = ('If the task is fully done (including any email it asks you to send), reply '
+                 '{"done": true, "answer": "..."} now. Otherwise choose the next action.')
 
 
 def render_outcome(action: str, payload: dict[str, Any]) -> str:
@@ -200,8 +200,9 @@ SYSTEM = (
     "the same payload.\n"
     "- When a send-email action returns DELIVERED, that email has been sent and is done: "
     "never send it again. Finish with a short confirmation.\n"
-    "- Finish as soon as a step's result answers the task. For a total or a count, finish "
-    "right after db.query_aggregate returns the value; do not ask for it again.\n"
+    "- Finish as soon as everything the task asks for is done. If the task only asks for a "
+    "total or a count, finish right after db.query_aggregate returns the value; do not ask "
+    "for it again. If it also asks you to send an email, send it first.\n"
     "- Finish only when the task is done, and put the figures you found in the answer.\n"
     "\nActions you can use:\n"
 )

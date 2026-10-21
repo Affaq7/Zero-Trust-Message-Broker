@@ -120,8 +120,10 @@ def test_prompt_has_the_stopping_rules(fake_llm):
     system = PlannerAgent(fake_llm("planner", {}), RecordingSender()).system
     assert "When a send-email action returns DELIVERED, that email has been sent and is done" in system
     assert "never send it again. Finish with a short confirmation." in system
-    assert "Finish as soon as a step's result answers the task" in system
-    assert "finish right after db.query_aggregate returns the value" in system
+    assert "Finish as soon as everything the task asks for is done." in system
+    assert ("If the task only asks for a total or a count, finish right after db.query_aggregate "
+            "returns the value") in system
+    assert "If it also asks you to send an email, send it first." in system
 
 
 @pytest.mark.parametrize("action, payload, expected", [
@@ -165,8 +167,8 @@ def _last_line(planner, history, steps=None):
     return planner._prompt(state).splitlines()[-1]
 
 
-AFTER_SUCCESS = ('If the results above answer the task, reply {"done": true, "answer": "..."} now. '
-                 "Otherwise choose the next action.")
+AFTER_SUCCESS = ('If the task is fully done (including any email it asks you to send), reply '
+                 '{"done": true, "answer": "..."} now. Otherwise choose the next action.')
 OK_STEP = {"action": "db.query_aggregate", "resource": "db:project_costs",
            "outcome": 'OK. Result: {"rows": [{"value": 184250}]}'}
 DELIVERED_STEP = {"action": "tool.send_email_internal", "resource": "email:internal",
@@ -187,6 +189,24 @@ ERROR_STEP = {"action": "db:query_aggregate", "resource": "db:project_costs",
 def test_closing_line_depends_on_the_last_step(fake_llm, history, expected):
     planner = PlannerAgent(fake_llm("planner", {}), RecordingSender())
     assert _last_line(planner, history) == expected
+
+
+def test_email_task_after_db_result_is_not_told_to_finish(fake_llm):
+    # Live N3 (run 20261021T221652Z) finished after the total, without the email.
+    planner = PlannerAgent(fake_llm("planner", {}), RecordingSender())
+    state = {"task": "Email a short summary of the total cost of Project X to alice.morgan@corp.local.",
+             "trace_id": "t", "chain": ["user"], "history": [OK_STEP], "steps": 1,
+             "decision": None, "answer": None, "error": None}
+    line = planner._prompt(state).splitlines()[-1]
+    assert line == AFTER_SUCCESS
+    assert "If the results above answer the task" not in line       # the old wording is gone
+    assert line.startswith("If the task is fully done (including any email it asks you to send)")
+
+
+def test_total_only_task_may_still_finish_after_db_result(fake_llm):
+    planner = PlannerAgent(fake_llm("planner", {}), RecordingSender())
+    assert _last_line(planner, [OK_STEP]) == AFTER_SUCCESS            # N1: finish right after the total
+    assert 'reply {"done": true, "answer": "..."} now' in AFTER_SUCCESS
 
 
 def test_step_limit_line_still_wins(fake_llm):
