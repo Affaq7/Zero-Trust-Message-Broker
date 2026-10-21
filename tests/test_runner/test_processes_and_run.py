@@ -73,6 +73,10 @@ def test_processes_get_runner_settings(tmp_path):
     env = tb.procs["dummy"].env
     assert (env["MODE"], env["AGENT_NAME"], env["LLM_SEED"], env["AGENT_IMPL"]) == ("direct", "dummy", "7", "")
     assert env["MOCKS_URL"] == tb.procs["mocks"].url
+    assert env["PLANNER_DEBUG_PROMPTS"] == ""                      # off by default
+    on = Testbed(dummy_config(tmp_path, debug_prompts=True))
+    on._plan()
+    assert on.procs["dummy"].env["PLANNER_DEBUG_PROMPTS"] == "1"
     assert env["AGENT_URLS"] == f"dummy=http://127.0.0.1:{tb.procs['dummy'].port}"
 
 

@@ -72,10 +72,66 @@ def test_planner_knows_the_real_database_schema(tmp_path):
 
 
 def test_system_prompt_fits_with_room_to_spare(fake_llm):
-    from agents.llm import estimate_tokens
+    from agents.llm import LLMSettings, estimate_tokens
+    from agents.planner import MAX_RESULT_CHARS
     planner = PlannerAgent(fake_llm("planner", {}), RecordingSender())
     assert "db:project_costs" in planner.system
-    assert estimate_tokens(planner.system) < 1500         # leaves room for task, history and output
+    system = estimate_tokens(planner.system)
+    full_history = planner.max_steps * (MAX_RESULT_CHARS // 3 + 30)
+    s = LLMSettings()
+    assert system < 1500
+    assert system + full_history + 200 + s.num_predict < s.num_ctx * 0.8   # well under num_ctx
+
+
+def test_every_planner_action_has_a_guide_with_a_valid_example():
+    from agents.planner import ACTION_GUIDE
+    from contracts.payloads import validate_payload
+    assert set(ACTION_GUIDE) == set(planner_actions())
+    for action, (use_when, resource, payload) in ACTION_GUIDE.items():
+        validate_payload(action, payload)                      # raises if the example drifted
+        assert use_when and resource.split(":")[0] in {"db", "file", "email"}
+
+
+def test_db_examples_use_real_tables_columns_and_values():
+    from agents.planner import ACTION_GUIDE, DATA_TABLES, PROJECT_NAMES
+    from mocks.seed import PROJECTS
+    assert PROJECT_NAMES == [name for _, name, _ in PROJECTS]
+    for action, (_, resource, payload) in ACTION_GUIDE.items():
+        if not resource.startswith("db:"):
+            continue
+        columns = DATA_TABLES[resource.removeprefix("db:")]
+        used = set(payload.get("filters", {})) | set(payload.get("columns", [])) | \
+            set(payload.get("group_by", [])) | set(payload.get("updates", {})) | \
+            ({payload["column"]} if payload.get("column") else set())
+        assert used <= set(columns), (action, used - set(columns))
+
+
+def test_prompt_states_the_rules_that_failed_live(fake_llm):
+    system = PlannerAgent(fake_llm("planner", {}), RecordingSender()).system
+    assert "Totals and counts: use db.query_aggregate" in system
+    assert "It is never a list" in system and "group_by is a list" in system
+    assert "Project names, exactly: Project X, Project Y, Project Z." in system
+    assert system.count("example:") == len(planner_actions())
+
+
+def test_debug_prompts_off_by_default(fake_llm, tmp_path, monkeypatch):
+    monkeypatch.delenv("PLANNER_DEBUG_PROMPTS", raising=False)
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    planner = PlannerAgent(fake_llm("planner", {"planner.decide": [finish("x")]}), RecordingSender())
+    planner.run_task(CTX)
+    assert not (tmp_path / "prompts").exists()
+
+
+def test_debug_prompts_written_per_step(fake_llm, tmp_path, monkeypatch):
+    monkeypatch.setenv("PLANNER_DEBUG_PROMPTS", "1")
+    monkeypatch.setenv("LOG_DIR", str(tmp_path))
+    planner = PlannerAgent(fake_llm("planner", {"planner.decide": [COUNT, finish("20")]}), RecordingSender())
+    planner.run_task(CTX)
+    folder = tmp_path / "prompts" / "planner" / CTX.trace_id
+    assert sorted(p.name for p in folder.iterdir()) == ["step01.txt", "step02.txt"]
+    step2 = (folder / "step02.txt").read_text(encoding="utf-8")
+    assert step2.startswith("--- SYSTEM ---") and "--- USER ---" in step2
+    assert "User task: How many employees are there?" in step2 and "Step 1: db.query_aggregate" in step2
 
 
 def test_one_step_then_answer(make_planner, llm_calls):

@@ -5,6 +5,7 @@
   --llm fake|ollama  LLM backend for the agents (default: fake)
   --max-minutes M    stop starting new repetitions after M minutes
   --dry-run          only load and check the scenario files
+  --debug-prompts    write each planner prompt to the run's logs (off by default)
 
 Results go to results/<run_id>/ (gitignored). Ctrl+C stops after cleaning
 up the current repetition's processes and keeps the finished rows.
@@ -35,6 +36,8 @@ def parse(argv):
     p.add_argument("--llm", choices=["fake", "ollama"], default="fake")
     p.add_argument("--max-minutes", type=float)
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--debug-prompts", action="store_true",
+                   help="write each planner prompt to <rep>/logs/prompts/ (off by default)")
     return p.parse_args(argv)
 
 
@@ -79,7 +82,8 @@ def main(argv=None) -> int:
                         stopped = True
                         raise StopIteration
                     outcomes = run_repetition(s, rep, writer.dir, concurrency=conc,
-                                              llm_backend=args.llm, llm_base_url=llm.base_url)
+                                              llm_backend=args.llm, llm_base_url=llm.base_url,
+                                              debug_prompts=args.debug_prompts)
                     for o in outcomes:
                         ev = evaluate(s, o)
                         writer.add(s, o, ev)

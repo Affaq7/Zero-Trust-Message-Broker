@@ -83,11 +83,13 @@ def _send_task(url: str, task: str, trace_id: str, timeout_s: int) -> tuple[str,
 
 
 def run_repetition(scenario: Scenario, rep: int, run_dir: Path, *, concurrency: int = 1,
-                   llm_backend: str = "fake", llm_base_url: str = "http://localhost:11434") -> list[TaskOutcome]:
+                   llm_backend: str = "fake", llm_base_url: str = "http://localhost:11434",
+                   debug_prompts: bool = False) -> list[TaskOutcome]:
     rep_dir = run_dir / f"{scenario.id}" / f"c{concurrency}" / f"rep{rep:02d}"
     config = TestbedConfig(
         agents=[a.model_dump() for a in scenario.agents], run_dir=rep_dir, seed=rep,
-        llm_backend=llm_backend, fake_llm=scenario.fake_llm, llm_base_url=llm_base_url)
+        llm_backend=llm_backend, fake_llm=scenario.fake_llm, llm_base_url=llm_base_url,
+        debug_prompts=debug_prompts)
     log_dir = rep_dir / "logs"
 
     with Testbed(config) as tb:

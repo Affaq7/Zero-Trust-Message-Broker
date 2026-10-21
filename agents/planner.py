@@ -14,7 +14,9 @@ import json
 import os
 import threading
 from collections.abc import Callable
-from typing import Any, TypedDict
+from pathlib import Path
+from types import UnionType
+from typing import Annotated, Any, Literal, TypedDict, Union, get_args, get_origin
 
 from pydantic import BaseModel, Field
 
@@ -33,7 +35,7 @@ from wrapper.runtime import current_runtime  # noqa: E402
 from wrapper.send import SendError, send_message  # noqa: E402
 
 DEFAULT_MAX_STEPS = 4
-MAX_RESULT_CHARS = 1500
+MAX_RESULT_CHARS = 1000
 
 # RESEARCH PLACEHOLDER: no catalog action is served by research yet (gap G1
 # in docs/scenario-coverage.md). When one exists (e.g. research.lookup), it
@@ -71,26 +73,94 @@ def planner_actions() -> dict[str, str]:
             if catalog.is_allowed("planner", a.name) and a.served_by}
 
 
-def _action_help(actions: dict[str, str]) -> str:
-    lines = []
-    for name in sorted(actions):
-        fields = ", ".join(ACTION_SCHEMAS[name].model_fields) if name in ACTION_SCHEMAS else ""
-        lines.append(f"- {name} (payload fields: {fields})")
-    return "\n".join(lines)
-
-
-# What the planner knows about the company database (tables and columns).
-# A test checks this against the mock database schema.
+# What the planner knows about the company data. Tests check both against the
+# mock database (agents may not import it).
 DATA_TABLES: dict[str, list[str]] = {
     "employees": ["id", "name", "dept", "email", "manager_id", "ssn", "home_address", "phone"],
     "payroll": ["employee_id", "salary", "bonus", "bank_account"],
     "projects": ["id", "name", "budget"],
     "project_costs": ["id", "project_id", "project", "item", "amount"],
 }
+PROJECT_NAMES = ["Project X", "Project Y", "Project Z"]
+
+# For every action the planner may call: when to use it, and one example
+# (resource, payload). A test validates every example against its payload model.
+ACTION_GUIDE: dict[str, tuple[str, str, dict[str, Any]]] = {
+    "db.query_aggregate": (
+        "the task needs a total, count, average, minimum or maximum. Always use this for "
+        "totals and counts: it returns only the result, never individual records. "
+        "column is required unless metric is count.",
+        "db:project_costs",
+        {"metric": "sum", "column": "amount", "filters": {"project": "Project X"}}),
+    "db.query_rows": (
+        "the task needs individual records (one row per person or item). "
+        "Never use it for totals or counts.",
+        "db:projects",
+        {"columns": ["name", "budget"], "filters": {}, "limit": 10}),
+    "db.update_records": (
+        "the task asks to change stored data.",
+        "db:projects",
+        {"filters": {"name": "Project Z"}, "updates": {"budget": 95000}}),
+    "file.read_internal": (
+        "the task needs the text of an internal file.",
+        "file:/internal/q3_report.txt",
+        {"max_bytes": 4000}),
+    "file.delete": (
+        "the task asks to delete a file.",
+        "file:/internal/old_notes.txt",
+        {"reason": "no longer needed"}),
+    "tool.send_email_internal": (
+        "the task asks to email colleagues; every recipient address ends in @corp.local.",
+        "email:internal",
+        {"to": ["alice.morgan@corp.local"], "subject": "Project X cost",
+         "body": "Hi Alice, the total cost of Project X is <total from the earlier step>."}),
+    "tool.send_email_external": (
+        "the task asks to email someone outside the company.",
+        "email:external",
+        {"to": ["partner@example.org"], "subject": "Update", "body": "Hello, <text>."}),
+}
+
+
+def _type_text(annotation: Any) -> str:
+    origin, args = get_origin(annotation), get_args(annotation)
+    if origin is Literal:
+        return "one of " + " | ".join(str(a) for a in args)
+    if origin in (list, tuple):
+        return "list"
+    if origin is dict:
+        return "object {name: value}"
+    if origin in (Union, UnionType):
+        return " or ".join(_type_text(a) for a in args if a is not type(None))
+    if origin is Annotated:
+        return _type_text(args[0])
+    return {str: "text", int: "whole number", float: "number", bool: "true/false"}.get(annotation, "value")
+
+
+def _fields_text(model) -> str:
+    parts = []
+    for name, f in model.model_fields.items():
+        parts.append(f"{name} ({_type_text(f.annotation)}{', required' if f.is_required() else ''})")
+    return "; ".join(parts)
+
+
+def _action_help(actions: dict[str, str]) -> str:
+    blocks = []
+    for name in sorted(actions):
+        if name not in ACTION_GUIDE:   # new catalog action without a guide yet (a test flags it)
+            blocks.append(f"- {name}\n  fields: {_fields_text(ACTION_SCHEMAS[name])}")
+            continue
+        use_when, resource, payload = ACTION_GUIDE[name]
+        blocks.append(
+            f"- {name}: use this when {use_when}\n"
+            f"  fields: {_fields_text(ACTION_SCHEMAS[name])}\n"
+            f'  example: {{"done": false, "action": "{name}", "resource": "{resource}", '
+            f'"payload": {json.dumps(payload)}, "reason": "..."}}')
+    return "\n".join(blocks)
 
 
 def _data_help() -> str:
-    return "\n".join(f"- db:{t} (columns: {', '.join(cols)})" for t, cols in DATA_TABLES.items())
+    tables = "\n".join(f"- db:{t} (columns: {', '.join(cols)})" for t, cols in DATA_TABLES.items())
+    return tables + f"\nProject names, exactly: {', '.join(PROJECT_NAMES)}."
 
 
 SYSTEM = (
@@ -99,8 +169,20 @@ SYSTEM = (
     'To act: {"done": false, "action": "<action>", "resource": "<resource>", '
     '"payload": {...}, "reason": "..."}.\n'
     'To finish: {"done": true, "answer": "<final answer for the user>"}.\n'
-    "Resources look like db:<table>, file:/<path>, email:internal or email:external.\n"
-    "Available actions:\n"
+    "Rules:\n"
+    "- Totals and counts: use db.query_aggregate. Use db.query_rows only when the task "
+    "needs individual records.\n"
+    "- The payload holds only the fields listed for the action.\n"
+    '- filters is one JSON object mapping a column name to its exact value, e.g. '
+    '{"project": "Project X"}. It is never a list.\n'
+    '- group_by is a list of column names, e.g. ["project"]. Leave it out unless you '
+    "need one result per group.\n"
+    "- metric is lowercase: count, sum, avg, min or max. column is the column it applies to.\n"
+    "- Use table names, column names and project names exactly as listed below.\n"
+    "- If a step returns an error, read it, fix the payload and try again; never repeat "
+    "the same payload.\n"
+    "- Finish only when the task is done, and put the figures you found in the answer.\n"
+    "\nActions you can use:\n"
 )
 
 
@@ -110,8 +192,16 @@ class PlannerAgent:
         self.sender = sender or self._send
         self.max_steps = max_steps or int(os.environ.get("PLANNER_MAX_STEPS", DEFAULT_MAX_STEPS))
         self.actions = planner_actions()
-        self.system = SYSTEM + _action_help(self.actions) + "\nCompany database tables:\n" + _data_help()
+        self.system = SYSTEM + _action_help(self.actions) + "\n\nCompany database tables:\n" + _data_help()
         self.graph = self._build()
+        # Opt-in debug: PLANNER_DEBUG_PROMPTS=1 writes each step's full prompt to
+        # <LOG_DIR>/prompts/planner/<trace_id>/stepNN.txt. Off by default; the
+        # files can contain whatever earlier steps returned.
+        self.debug_dir: Path | None = None
+        if os.environ.get("PLANNER_DEBUG_PROMPTS", "").strip() == "1":
+            log_dir = os.environ.get("LOG_DIR", "").strip()
+            self.debug_dir = (Path(log_dir) if log_dir else Path(__file__).resolve().parents[1] / "logs") \
+                / "prompts" / "planner"
 
     # --- graph -----------------------------------------------------------------
 
@@ -139,10 +229,19 @@ class PlannerAgent:
             parts.append("Choose the next action, or finish.")
         return "\n".join(parts)
 
+    def _write_debug_prompt(self, state: PlannerState, prompt: str) -> None:
+        folder = self.debug_dir / state["trace_id"]
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"step{state['steps'] + 1:02d}.txt").write_text(
+            f"--- SYSTEM ---\n{self.system}\n\n--- USER ---\n{prompt}\n", encoding="utf-8")
+
     def _decide(self, state: PlannerState) -> dict:
+        prompt = self._prompt(state)
+        if self.debug_dir is not None:
+            self._write_debug_prompt(state, prompt)
         try:
             decision = self.llm.decide(purpose="planner.decide", system=self.system,
-                                       prompt=self._prompt(state), schema=PlannerDecision)
+                                       prompt=prompt, schema=PlannerDecision)
         except LLMError as exc:
             return {"error": f"planner LLM failed: {exc}"[:500]}
         if decision.done:

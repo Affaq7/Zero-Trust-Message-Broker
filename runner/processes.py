@@ -74,6 +74,7 @@ class TestbedConfig:
     fake_llm: dict[str, dict] = field(default_factory=dict)
     llm_base_url: str = "http://localhost:11434"
     python: str = sys.executable
+    debug_prompts: bool = False              # PLANNER_DEBUG_PROMPTS=1 for the agents
 
 
 class Testbed:
@@ -108,6 +109,7 @@ class Testbed:
                 "LLM_BACKEND": c.llm_backend, "LLM_SEED": str(c.seed),
                 "LLM_FAKE_SCRIPT": str(script) if c.llm_backend == "fake" else "",
                 "LLM_BASE_URL": c.llm_base_url,
+                "PLANNER_DEBUG_PROMPTS": "1" if c.debug_prompts else "",
             })
 
     def start(self) -> "Testbed":
