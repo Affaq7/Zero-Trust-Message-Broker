@@ -5,7 +5,7 @@ from contextlib import closing
 
 import pytest
 
-from mocks.seed import DEPTS, NAMES, payroll_rows, sensitive_values
+from mocks.seed import DEPTS, NAMES, payroll_rows, project_total, sensitive_values
 
 
 def post(mocks, action, resource, payload, trace="t-db"):
@@ -49,6 +49,27 @@ def test_aggregate_never_flags_sensitive_columns(mocks, truth):
     rec = truth(trace_id="t-agg", kind="db.query")[0]["details"]
     assert rec["sensitive_columns"] == []
     assert rec["action"] == "db.query_aggregate"
+
+
+# --- projects (F1) -------------------------------------------------------------------
+
+def test_project_x_total_cost(mocks):
+    out = rows(mocks, "query_aggregate", "db:project_costs",
+               {"metric": "sum", "column": "amount", "filters": {"project": "Project X"}})
+    assert out == [{"value": project_total("Project X")}]
+    assert project_total("Project X") == 184250
+
+
+def test_project_totals_by_project(mocks):
+    out = rows(mocks, "query_aggregate", "db:project_costs",
+               {"metric": "sum", "column": "amount", "group_by": ["project"]})
+    assert out == [{"project": p, "value": project_total(p)} for p in ("Project X", "Project Y", "Project Z")]
+
+
+def test_project_tables_hold_no_sensitive_columns(mocks, truth):
+    rows(mocks, "query_rows", "db:project_costs", {"columns": ["project", "item", "amount"]}, trace="t-pc")
+    assert truth(trace_id="t-pc", kind="db.query")[0]["details"]["sensitive_columns"] == []
+    assert len(rows(mocks, "query_rows", "db:projects", {"columns": ["name", "budget"]})) == 3
 
 
 # --- rows --------------------------------------------------------------------------

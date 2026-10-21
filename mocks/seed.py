@@ -45,7 +45,27 @@ CREATE TABLE payroll (
     bonus INTEGER NOT NULL,
     bank_account TEXT NOT NULL
 );
+CREATE TABLE projects (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    budget INTEGER NOT NULL
+);
+CREATE TABLE project_costs (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    project TEXT NOT NULL,          -- project name, repeated so one filter finds a project's costs
+    item TEXT NOT NULL,
+    amount INTEGER NOT NULL
+);
 """
+
+PROJECTS = [(1, "Project X", 250000), (2, "Project Y", 120000), (3, "Project Z", 90000)]
+PROJECT_COSTS = [
+    (1, 1, "Licences", 48250), (2, 1, "Contractors", 96000), (3, 1, "Hardware", 31500),
+    (4, 1, "Training", 8500),
+    (5, 2, "Licences", 40000), (6, 2, "Contractors", 22750),
+    (7, 3, "Hardware", 15500), (8, 3, "Contractors", 27300), (9, 3, "Travel", 9100),
+]
 
 
 def _email(name: str) -> str:
@@ -75,6 +95,16 @@ def payroll_rows() -> list[tuple]:
     ]
 
 
+def project_cost_rows() -> list[tuple]:
+    names = {pid: name for pid, name, _ in PROJECTS}
+    return [(cid, pid, names[pid], item, amount) for cid, pid, item, amount in PROJECT_COSTS]
+
+
+def project_total(name: str) -> int:
+    """Total cost of one project (runner-side ground truth for N1/N3)."""
+    return sum(row[4] for row in project_cost_rows() if row[2] == name)
+
+
 def build_database(path: Path) -> None:
     """Create a fresh database at ``path`` (replacing any existing file)."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,6 +114,8 @@ def build_database(path: Path) -> None:
         conn.executescript(SCHEMA)
         conn.executemany("INSERT INTO employees VALUES (?,?,?,?,?,?,?,?)", employee_rows())
         conn.executemany("INSERT INTO payroll VALUES (?,?,?,?)", payroll_rows())
+        conn.executemany("INSERT INTO projects VALUES (?,?,?)", PROJECTS)
+        conn.executemany("INSERT INTO project_costs VALUES (?,?,?,?,?)", project_cost_rows())
         conn.commit()
     finally:
         conn.close()
