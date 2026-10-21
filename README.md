@@ -289,3 +289,15 @@ could interleave lines.
 
 Use `curl.exe`, not `curl`. In Windows PowerShell `curl` is an alias for
 `Invoke-WebRequest` and takes different arguments.
+
+## Troubleshooting
+
+**`git push` reports exit code 255 although it worked.** On this Windows
+setup, `git push` can print exit code 255 even when the push succeeded (git
+writes its progress to stderr, which PowerShell treats as an error). Check
+the real result instead of the exit code:
+
+```powershell
+git status -sb                      # "## main...origin/main" with no [ahead N] means pushed
+git log --oneline -1 origin/main    # should show your latest commit
+```
