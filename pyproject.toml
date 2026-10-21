@@ -27,6 +27,7 @@ include = ["contracts*", "wrapper*", "agents*", "runner*", "mocks*"]
 
 [tool.setuptools.package-data]
 contracts = ["*.yaml"]
+mocks = ["fixtures/files/*/*", "fixtures/web/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

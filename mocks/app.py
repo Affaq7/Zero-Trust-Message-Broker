@@ -1,7 +1,8 @@
 """Mock-services FastAPI app.
 
 GET /health, POST /reset, GET /ground-truth, and the services:
-POST /db/query_aggregate, /db/query_rows, /db/update_records.
+POST /db/query_aggregate, /db/query_rows, /db/update_records,
+POST /files/read, /files/delete, POST /web/fetch.
 
 Service requests carry the envelope's ``resource`` and ``payload``; the
 payload must fit contracts/payloads.py. The caller's X-Trace-Id header ties
@@ -15,8 +16,15 @@ from fastapi import FastAPI, Header, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from contracts.payloads import QueryAggregatePayload, QueryRowsPayload, UpdateRecordsPayload
-from mocks import db
+from contracts.payloads import (
+    DeleteFilePayload,
+    FetchPagePayload,
+    QueryAggregatePayload,
+    QueryRowsPayload,
+    ReadInternalFilePayload,
+    UpdateRecordsPayload,
+)
+from mocks import db, files, web
 from mocks.config import MockSettings
 from mocks.ground_truth import GroundTruthLog
 from mocks.seed import build_database
@@ -49,6 +57,7 @@ class MockWorld:
 
     def reset(self, trace_id: str | None = None) -> None:
         build_database(self.settings.db_path)
+        files.reset_files(self.settings.files_dir)
         self.truth.append("reset", trace_id, {})
 
 
@@ -116,6 +125,51 @@ def create_app(settings: MockSettings) -> FastAPI:
         except db.DbError as exc:
             return _error(exc.status, str(exc))
         world.truth.append("db.write", trace_id, details)
+        return result
+
+    # --- files ------------------------------------------------------------
+
+    @app.post("/files/read")
+    def read_file(req: ServiceRequest, trace_id: TraceHeader = None):
+        try:
+            payload = ReadInternalFilePayload.model_validate(req.payload)
+            result = files.read_file(world.settings.files_dir, req.resource, payload.max_bytes)
+        except ValidationError as exc:
+            return _invalid(exc)
+        except files.FileStoreError as exc:
+            return _error(exc.status, str(exc))
+        world.truth.append("file.read", trace_id, {
+            "path": result["path"], "bytes_returned": len(result["content"].encode("utf-8")),
+            "truncated": result["truncated"]})
+        return result
+
+    @app.post("/files/delete")
+    def delete_file(req: ServiceRequest, trace_id: TraceHeader = None):
+        try:
+            payload = DeleteFilePayload.model_validate(req.payload)
+            result = files.delete_file(world.settings.files_dir, req.resource)
+        except ValidationError as exc:
+            return _invalid(exc)
+        except files.FileStoreError as exc:
+            return _error(exc.status, str(exc))
+        world.truth.append("file.delete", trace_id, {"path": result["path"], "reason": payload.reason})
+        return result
+
+    # --- web --------------------------------------------------------------
+
+    @app.post("/web/fetch")
+    def fetch_page(req: ServiceRequest, trace_id: TraceHeader = None):
+        try:
+            payload = FetchPagePayload.model_validate(req.payload)
+            result = web.fetch(req.resource, payload.max_chars)
+        except ValidationError as exc:
+            return _invalid(exc)
+        except web.WebError as exc:
+            if exc.status == 404:
+                world.truth.append("web.fetch", trace_id, {"url": req.resource, "found": False})
+            return _error(exc.status, str(exc))
+        world.truth.append("web.fetch", trace_id, {
+            "url": result["url"], "found": True, "chars": len(result["content"])})
         return result
 
     return app

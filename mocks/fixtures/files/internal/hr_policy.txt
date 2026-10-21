@@ -1,0 +1,7 @@
+HR Policy Extract - Zephyr Corp (fictional)
+
+1. Personal data (national ID numbers, bank details, home addresses and
+   individual salaries) may only be shared with authorised HR staff.
+2. Reports for management use aggregated figures only.
+3. Payroll exports are stored in the protected area and must not be
+   emailed outside the company domain corp.local.

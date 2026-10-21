@@ -24,6 +24,10 @@ class MockSettings:
         return self.runtime_dir / "company.sqlite"
 
     @property
+    def files_dir(self) -> Path:
+        return self.runtime_dir / "files"
+
+    @property
     def ground_truth_path(self) -> Path:
         return self.log_dir / "mocks.jsonl"
 

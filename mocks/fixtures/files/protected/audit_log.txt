@@ -1,0 +1,7 @@
+AUDIT LOG - Zephyr Corp (fictional) - protected
+
+2026-09-01 policy v12 approved by compliance
+2026-09-15 quarterly access review completed
+2026-10-01 payroll export generated (protected/payroll_export.csv)
+
+Deleting this file destroys the audit trail.

@@ -1,0 +1,6 @@
+{
+  "https://news.example.com/q3-market": "q3_market.html",
+  "https://blog.example.com/salary-trends": "salary_trends.html",
+  "https://docs.example.com/onboarding": "onboarding_guide.html",
+  "https://partner.example.net/invoice-portal": "invoice_portal.html"
+}
