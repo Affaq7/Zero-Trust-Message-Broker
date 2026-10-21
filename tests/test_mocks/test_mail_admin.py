@@ -84,9 +84,10 @@ def test_policy_change_applied_and_recorded(mocks, truth):
     r = change(mocks, "email-external", {"allow_all": True}, trace="t-a5")
     assert r.json() == {"status": "applied", "policy_id": "email-external"}
     assert mocks.get("/admin/policies").json() == {"policies": {"email-external": {"allow_all": True}}}
-    d = truth(trace_id="t-a5", kind="admin.policy_change")[0]["details"]
-    assert d == {"resource": "policy:email-external", "policy_id": "email-external",
-                 "changes": {"allow_all": True}}
+    [rec] = truth(trace_id="t-a5", kind="admin.policy_change")
+    assert rec["details"] == {"resource": "policy:email-external", "policy_id": "email-external",
+                              "changes": {"allow_all": True}, "outcome": "applied", "error": None}
+    assert rec["id"] and rec["updated_at"] >= rec["recorded_at"]
 
 
 def test_changes_accumulate_and_reset_clears(mocks):
@@ -97,9 +98,41 @@ def test_changes_accumulate_and_reset_clears(mocks):
     assert mocks.get("/admin/policies").json() == {"policies": {}}
 
 
-def test_bad_policy_change_rejected(mocks, truth):
+def test_invalid_policy_change_leaves_a_rejected_attempt(mocks, truth):
     assert change(mocks, "p1", {}, trace="t-badpol").status_code == 422
-    assert truth(trace_id="t-badpol") == []
+    [rec] = truth(trace_id="t-badpol", kind="admin.policy_change")
+    assert rec["details"]["outcome"] == "rejected" and rec["details"]["error"] == "invalid payload"
+    assert rec["details"]["policy_id"] == "p1"
+    assert mocks.get("/admin/policies").json() == {"policies": {}}        # no side effect
+
+
+def test_malformed_policy_request_still_recorded(mocks, truth):
+    r = mocks.post("/admin/policy", headers={"X-Trace-Id": "t-odd"},
+                   json={"resource": "policy:x", "payload": {"policy_id": 7, "changes": "all"}})
+    assert r.status_code == 422
+    d = truth(trace_id="t-odd", kind="admin.policy_change")[0]["details"]
+    assert (d["policy_id"], d["changes"], d["outcome"]) == (None, None, "rejected")
+
+
+def test_attempt_is_recorded_before_the_side_effect(mocks, truth):
+    class Broken(dict):
+        def setdefault(self, *a, **kw):
+            raise RuntimeError("side effect failed")
+    mocks.app.state.world.policies = Broken()
+    with pytest.raises(RuntimeError):
+        change(mocks, "p1", {"a": 1}, trace="t-crash")
+    [rec] = truth(trace_id="t-crash", kind="admin.policy_change")
+    assert rec["details"]["outcome"] == "pending" and "updated_at" not in rec
+
+
+def test_update_keeps_other_records(mocks, truth):
+    change(mocks, "p1", {"a": 1}, trace="t-u1")
+    send(mocks, "email:internal", ["a@corp.local"], trace="t-u2")
+    change(mocks, "p2", {"b": 2}, trace="t-u3")
+    assert [r["details"]["outcome"] for r in truth(kind="admin.policy_change")] == ["applied", "applied"]
+    assert truth(trace_id="t-u2", kind="mail.attempt")[0]["details"]["status"] == "delivered"
+    ids = [r["id"] for r in truth()]
+    assert len(ids) == len(set(ids))
 
 
 # --- whole world -------------------------------------------------------------------

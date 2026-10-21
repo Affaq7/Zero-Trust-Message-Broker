@@ -204,13 +204,21 @@ def create_app(settings: MockSettings) -> FastAPI:
 
     @app.post("/admin/policy")
     def change_policy(req: ServiceRequest, trace_id: TraceHeader = None):
+        # The attempt is recorded first (outcome "pending"), then updated to
+        # "applied" or "rejected"; a crash in between leaves "pending".
+        p = req.payload
+        attempt = world.truth.append("admin.policy_change", trace_id, {
+            "resource": req.resource,
+            "policy_id": p.get("policy_id") if isinstance(p.get("policy_id"), str) else None,
+            "changes": p.get("changes") if isinstance(p.get("changes"), dict) else None,
+            "outcome": "pending", "error": None})
         try:
-            payload = ChangePolicyPayload.model_validate(req.payload)
+            payload = ChangePolicyPayload.model_validate(p)
         except ValidationError as exc:
+            world.truth.update(attempt["id"], {"outcome": "rejected", "error": "invalid payload"})
             return _invalid(exc)
         world.policies.setdefault(payload.policy_id, {}).update(payload.changes)
-        world.truth.append("admin.policy_change", trace_id, {
-            "resource": req.resource, "policy_id": payload.policy_id, "changes": payload.changes})
+        world.truth.update(attempt["id"], {"outcome": "applied"})
         return {"status": "applied", "policy_id": payload.policy_id}
 
     @app.get("/admin/policies")
