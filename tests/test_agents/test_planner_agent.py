@@ -167,8 +167,9 @@ def _last_line(planner, history, steps=None):
     return planner._prompt(state).splitlines()[-1]
 
 
-AFTER_SUCCESS = ('If the task is fully done (including any email it asks you to send), reply '
-                 '{"done": true, "answer": "..."} now. Otherwise choose the next action.')
+AFTER_SUCCESS = ('If the task only asks for information and the results above contain it, or any '
+                 'email the task asks for has been DELIVERED, reply {"done": true, "answer": "..."} now. '
+                 'If an email the task asks for has not been sent yet, send it now.')
 OK_STEP = {"action": "db.query_aggregate", "resource": "db:project_costs",
            "outcome": 'OK. Result: {"rows": [{"value": 184250}]}'}
 DELIVERED_STEP = {"action": "tool.send_email_internal", "resource": "email:internal",
@@ -199,14 +200,51 @@ def test_email_task_after_db_result_is_not_told_to_finish(fake_llm):
              "decision": None, "answer": None, "error": None}
     line = planner._prompt(state).splitlines()[-1]
     assert line == AFTER_SUCCESS
-    assert "If the results above answer the task" not in line       # the old wording is gone
-    assert line.startswith("If the task is fully done (including any email it asks you to send)")
+    assert "If the results above answer the task" not in line       # the wording that skipped the email
+    # N3 after the total: the email is not sent yet, so the line says to send it.
+    assert line.endswith("If an email the task asks for has not been sent yet, send it now.")
 
 
-def test_total_only_task_may_still_finish_after_db_result(fake_llm):
+def test_total_only_task_is_told_to_finish_after_db_result(fake_llm):
+    # Live N1 (run 20261021T223652Z) repeated the same query 4 times under
+    # "If the task is fully done ...": a question was never "done".
     planner = PlannerAgent(fake_llm("planner", {}), RecordingSender())
-    assert _last_line(planner, [OK_STEP]) == AFTER_SUCCESS            # N1: finish right after the total
-    assert 'reply {"done": true, "answer": "..."} now' in AFTER_SUCCESS
+    line = _last_line(planner, [OK_STEP])
+    assert line == AFTER_SUCCESS
+    assert line.startswith('If the task only asks for information and the results above contain it')
+    assert 'reply {"done": true, "answer": "..."} now' in line
+    assert "fully done" not in line
+
+
+def test_after_delivered_the_line_says_finish(fake_llm):
+    planner = PlannerAgent(fake_llm("planner", {}), RecordingSender())
+    line = _last_line(planner, [OK_STEP, DELIVERED_STEP])
+    assert "any email the task asks for has been DELIVERED, reply {\"done\": true" in line
+
+
+def test_frozen_planner_prompt_matches_recorded_hash():
+    # The planner prompt is frozen for the baseline. Changing anything the model
+    # sees (rules, examples, closing lines, step rendering) changes this hash;
+    # update docs/measurements.md deliberately, with a note, before it passes.
+    import re
+    from pathlib import Path
+
+    from agents.planner import prompt_fingerprint
+    doc = (Path(__file__).resolve().parents[2] / "docs" / "measurements.md").read_text(encoding="utf-8")
+    recorded = re.search(r"Frozen planner prompt SHA-256: `([0-9a-f]{64})`", doc)
+    assert recorded, "docs/measurements.md has no 'Frozen planner prompt SHA-256' line"
+    assert prompt_fingerprint() == recorded.group(1), \
+        "the planner prompt changed: if intended, record the new hash in docs/measurements.md"
+
+
+def test_any_prompt_edit_changes_the_fingerprint(monkeypatch):
+    import agents.planner as planner_module
+    before = planner_module.prompt_fingerprint()
+    monkeypatch.setattr(planner_module, "AFTER_SUCCESS", planner_module.AFTER_SUCCESS.replace("now.", "now!"))
+    assert planner_module.prompt_fingerprint() != before
+    monkeypatch.undo()
+    monkeypatch.setattr(planner_module, "SYSTEM", planner_module.SYSTEM + " ")
+    assert planner_module.prompt_fingerprint() != before
 
 
 def test_step_limit_line_still_wins(fake_llm):

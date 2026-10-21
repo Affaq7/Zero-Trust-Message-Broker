@@ -10,6 +10,7 @@ The available actions come from the catalog (the actions planner may call).
 The planner applies no policy of its own beyond knowing what it can do.
 """
 
+import hashlib
 import json
 import os
 import threading
@@ -68,8 +69,12 @@ Sender = Callable[..., Envelope]
 EMAIL_ACTIONS = {"tool.send_email_internal", "tool.send_email_external"}
 
 # Closing line of the prompt when the previous step succeeded.
-AFTER_SUCCESS = ('If the task is fully done (including any email it asks you to send), reply '
-                 '{"done": true, "answer": "..."} now. Otherwise choose the next action.')
+AFTER_SUCCESS = ('If the task only asks for information and the results above contain it, or any '
+                 'email the task asks for has been DELIVERED, reply {"done": true, "answer": "..."} now. '
+                 'If an email the task asks for has not been sent yet, send it now.')
+# Closing line before the first step and after an error; and at the step limit.
+CHOOSE_NEXT = "Choose the next action, or finish."
+STEP_LIMIT = "You have used all your steps. Finish now with the final answer."
 
 
 def render_outcome(action: str, payload: dict[str, Any]) -> str:
@@ -247,11 +252,11 @@ class PlannerAgent:
         for i, h in enumerate(state["history"], start=1):
             parts.append(f"Step {i}: {h['action']} on {h['resource']} -> {h['outcome']}")
         if state["steps"] >= self.max_steps:
-            parts.append("You have used all your steps. Finish now with the final answer.")
+            parts.append(STEP_LIMIT)
         elif state["history"] and not state["history"][-1]["outcome"].startswith("ERROR"):
             parts.append(AFTER_SUCCESS)
         else:
-            parts.append("Choose the next action, or finish.")
+            parts.append(CHOOSE_NEXT)
         return "\n".join(parts)
 
     def _debug_path(self, state: PlannerState, suffix: str) -> Path:
@@ -318,6 +323,34 @@ class PlannerAgent:
     def _send(**kwargs) -> Envelope:
         rt = current_runtime()
         return send_message(token=rt.token_for(kwargs["receiver"]), **kwargs)
+
+
+def prompt_fingerprint() -> str:
+    """SHA-256 of everything the planner can show the model: the system prompt
+    and the prompts built for fixed sample states (first step, after an OK
+    result, after DELIVERED, after an error, at the step limit). Any change
+    to rules, examples, closing lines or step rendering changes it. The
+    frozen value is recorded in docs/measurements.md and checked by a test."""
+    planner = PlannerAgent(llm=None, sender=lambda **k: None, max_steps=DEFAULT_MAX_STEPS)
+    ok = {"action": "db.query_aggregate", "resource": "db:project_costs",
+          "outcome": render_outcome("db.query_aggregate",
+                                    {"status": "ok", "result": {"rows": [{"value": 184250}]}})}
+    sent = {"action": "tool.send_email_internal", "resource": "email:internal",
+            "outcome": render_outcome("tool.send_email_internal", {"status": "ok", "result": {
+                "status": "delivered", "to": ["alice.morgan@corp.local"]}})}
+    err = {"action": "db:query_aggregate", "resource": "db:project_costs",
+           "outcome": render_outcome("db:query_aggregate", {"status": "error", "error": "example error"})}
+
+    def state(history, steps=None):
+        return {"task": "What is the total cost of Project X so far?", "trace_id": "t",
+                "chain": ["user"], "history": history,
+                "steps": len(history) if steps is None else steps,
+                "decision": None, "answer": None, "error": None}
+
+    parts = [planner.system, planner._prompt(state([])), planner._prompt(state([ok])),
+             planner._prompt(state([sent])), planner._prompt(state([err])),
+             planner._prompt(state([ok], steps=planner.max_steps))]
+    return hashlib.sha256("\n=====\n".join(parts).encode("utf-8")).hexdigest()
 
 
 _default: PlannerAgent | None = None

@@ -136,6 +136,10 @@ not_applicable (nothing runs; excluded from rates). Encode others only when
 the user says so (N2, N4, P1 and the other attacks wait on G1-G4, the
 research agent and the malicious agent).
 Stage files by name (not `git add -A`) while the CSV exists.
+The planner prompt is FROZEN for the baseline: `agents.planner.prompt_fingerprint()`
+must equal the "Frozen planner prompt SHA-256" in docs/measurements.md (a test
+checks it). Change the prompt only with the user's approval, then record the
+new hash there with a note.
 Steps: 0 docs; 1 mock skeleton + seeded SQLite + ground truth; 2 DB
 endpoints; 3 file store + web fixtures; 4 mail sink + admin handler;
 5 venv check/split; 6 LLM layer + fake backend; 7 POST /task + stub tokens;

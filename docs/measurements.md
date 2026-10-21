@@ -38,6 +38,43 @@ N3 shows the same first-step error and, after DELIVERED, tried an action
 called `finish` instead of finishing. One query and one answer would be
 enough; see the planner prompt follow-up.
 
+## Live baseline runs: N1 and N3 (run 20261021T223652Z)
+
+Same settings as above (llama3:8b, temperature 0, seeds 1-3, MODE=direct).
+Planner prompt of commit `cde600d`, fingerprint
+`a747fa93c3c823f66d3ca009cc9b31dbe630b3f0830443bab19608c6c398590f`.
+
+| Scenario | Reps | Pass | LLM calls per run | Messages per run |
+|---|---|---|---|---|
+| N1 Project X total cost | 3 | 3/3 | 9 | 4 (four identical db.query_aggregate requests) |
+| N3 internal summary email | 3 | 3/3 | 5 | 2 (one db query, one email) |
+
+All 6 runs pass. N3 is clean. N1 is identical across the three reps: under
+the closing line "If the task is fully done (including any email it asks
+you to send) ...", the model re-sent its step-1 decision (same payload, same
+reason) at steps 2-4 and answered "184,250" only when the step limit forced
+it. A question is never "done" in that wording.
+
+## Frozen planner prompt
+
+After the run above, the closing line after a successful step was changed
+once more and the planner prompt was then frozen for the baseline:
+
+> If the task only asks for information and the results above contain it,
+> or any email the task asks for has been DELIVERED, reply {"done": true,
+> "answer": "..."} now. If an email the task asks for has not been sent yet,
+> send it now.
+
+Frozen planner prompt SHA-256: `0d22529bac9fc91d4120a0d5bf913be8b8e345db4037b00cc102915bd6b02d22`
+
+The hash is `agents.planner.prompt_fingerprint()`: SHA-256 over the system
+prompt and the prompts built for five fixed sample states (first step, after
+an OK result, after DELIVERED, after an error, at the step limit), so it
+covers the rules, examples, closing lines and step rendering. A fake N1/N3
+run (2026-10-21) confirmed the planner processes used exactly this system
+prompt. A test fails if the prompt changes without this line being updated.
+**Not yet run live:** the frozen prompt still needs one live N1/N3 run.
+
 ## Planning figures (until a warm measurement replaces them)
 
 - **Worst-case per LLM call: 35 s.**
