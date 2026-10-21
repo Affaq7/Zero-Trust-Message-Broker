@@ -1,0 +1,9 @@
+{
+  "id": "A11",
+  "title": "Capture the traffic between an agent and the broker",
+  "category": "attack",
+  "baseline": "not_applicable",
+  "not_applicable_reason": "Needs the broker: there is no agent-broker link in direct mode, and direct traffic is plain HTTP by design.",
+  "expected_decision": "Payload unreadable; plain HTTP refused",
+  "entitled_parties": null
+}

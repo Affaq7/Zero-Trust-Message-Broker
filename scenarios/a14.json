@@ -1,0 +1,9 @@
+{
+  "id": "A14",
+  "title": "Valid stolen token used without the agent's private-key proof",
+  "category": "attack",
+  "baseline": "not_applicable",
+  "not_applicable_reason": "Decision S6: direct mode checks no token and no per-message proof (proof format not defined yet); running it would only repeat A6.",
+  "expected_decision": "DENY (identity reason code)",
+  "entitled_parties": null
+}

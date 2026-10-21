@@ -1,0 +1,9 @@
+{
+  "id": "A9",
+  "title": "Same agent triggers 5 denials in a short window",
+  "category": "attack",
+  "baseline": "not_applicable",
+  "not_applicable_reason": "Needs the broker: direct mode has no broker, so no request is ever denied and nothing can be quarantined.",
+  "expected_decision": "QUARANTINE, then all later messages rejected",
+  "entitled_parties": null
+}

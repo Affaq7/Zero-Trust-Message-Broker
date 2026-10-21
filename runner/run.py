@@ -85,6 +85,8 @@ def _send_task(url: str, task: str, trace_id: str, timeout_s: int) -> tuple[str,
 def run_repetition(scenario: Scenario, rep: int, run_dir: Path, *, concurrency: int = 1,
                    llm_backend: str = "fake", llm_base_url: str = "http://localhost:11434",
                    debug_prompts: bool = False) -> list[TaskOutcome]:
+    if scenario.baseline != "applicable":
+        raise ValueError(f"{scenario.id} is not applicable in direct mode; nothing to run")
     rep_dir = run_dir / f"{scenario.id}" / f"c{concurrency}" / f"rep{rep:02d}"
     config = TestbedConfig(
         agents=[a.model_dump() for a in scenario.agents], run_dir=rep_dir, seed=rep,

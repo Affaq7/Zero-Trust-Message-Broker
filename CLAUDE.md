@@ -131,8 +131,10 @@ Goal: mock services, five real agents, scenario runner, baseline runs in
 MODE=direct. Agents get JSON decisions from llama3:8b (no native tool
 calling); code performs actions. Scenario data is runner-only and agents
 never read it. scenarios/source/ (the team's CSV) is never committed.
-Encoded so far: scenarios/n1.json and n3.json only; encode others only when
-the user says so (N2, N4, P1 and attacks wait on G1-G4 and the teammates).
+Encoded so far: N1 and N3 (run), and A9, A10, A11, A12, A14 as
+not_applicable (nothing runs; excluded from rates). Encode others only when
+the user says so (N2, N4, P1 and the other attacks wait on G1-G4, the
+research agent and the malicious agent).
 Stage files by name (not `git add -A`) while the CSV exists.
 Steps: 0 docs; 1 mock skeleton + seeded SQLite + ground truth; 2 DB
 endpoints; 3 file store + web fixtures; 4 mail sink + admin handler;

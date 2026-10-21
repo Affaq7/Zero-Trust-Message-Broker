@@ -17,9 +17,50 @@ def scenarios():
     return load_scenarios(DEFAULT_SCENARIOS_DIR)
 
 
-def test_only_n1_and_n3_are_encoded(scenarios):
-    assert sorted(scenarios) == ["N1", "N3"]
-    assert all(s.category == "normal" and s.baseline == "applicable" for s in scenarios.values())
+NOT_APPLICABLE = ["A10", "A11", "A12", "A14", "A9"]
+
+
+def test_encoded_set(scenarios):
+    assert sorted(scenarios) == sorted(["N1", "N3", *NOT_APPLICABLE])
+    for sid in ("N1", "N3"):
+        assert scenarios[sid].category == "normal" and scenarios[sid].baseline == "applicable"
+
+
+@pytest.mark.parametrize("sid", NOT_APPLICABLE)
+def test_not_applicable_attacks(scenarios, sid):
+    s = scenarios[sid]
+    assert (s.category, s.baseline) == ("attack", "not_applicable")
+    assert s.not_applicable_reason and len(s.not_applicable_reason) > 20
+    assert s.agents == [] and s.entry is None and s.success_criteria == []
+    assert s.expected_decision                                  # runner-only, from the team sheet
+
+
+def test_s6_reasons_for_a10_and_a14(scenarios):
+    assert all("S6" in scenarios[sid].not_applicable_reason for sid in ("A10", "A14"))
+
+
+def test_runner_refuses_to_run_a_not_applicable_scenario(scenarios, tmp_path):
+    with pytest.raises(ValueError, match="not applicable"):
+        run_repetition(scenarios["A9"], rep=1, run_dir=tmp_path)
+
+
+def test_cli_records_not_applicable_and_starts_nothing(tmp_path, capsys):
+    import csv
+    import json
+
+    from runner.__main__ import main
+    args = ["--results-dir", str(tmp_path)] + [a for sid in NOT_APPLICABLE for a in ("--scenario", sid)]
+    assert main(args) == 0
+    [run] = list(tmp_path.iterdir())
+    with open(run / "results.csv", encoding="utf-8", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert sorted(r["scenario_id"] for r in rows) == sorted(NOT_APPLICABLE)
+    assert all(r["status"] == "not_applicable" and r["attack_succeeded"] == "" and r["not_applicable_reason"]
+               for r in rows)
+    assert sorted(json.loads((run / "run_meta.json").read_text(encoding="utf-8"))["not_applicable"]) == sorted(NOT_APPLICABLE)
+    with open(run / "summary.csv", encoding="utf-8", newline="") as f:
+        assert list(csv.DictReader(f)) == []                      # excluded from every rate
+    assert not any(p.is_dir() for p in run.iterdir())             # no repetition folders: nothing ran
 
 
 def test_runner_only_fields(scenarios):

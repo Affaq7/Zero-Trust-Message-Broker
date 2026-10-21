@@ -89,8 +89,10 @@ class Scenario(Strict):
     category: Literal["normal", "attack", "performance"]
     baseline: Literal["applicable", "not_applicable"] = "applicable"
     not_applicable_reason: str | None = None
-    agents: list[AgentProcess] = Field(min_length=1)
-    entry: Entry
+    # Required for applicable scenarios; may be left out when not_applicable
+    # (nothing is started for those).
+    agents: list[AgentProcess] = Field(default_factory=list)
+    entry: Entry | None = None
     success_criteria: list[Criterion] = Field(default_factory=list)
     reps: int = Field(default=1, ge=1, le=100)
     timeout_s: int = Field(default=900, ge=1, le=7200)
@@ -107,7 +109,9 @@ class Scenario(Strict):
         names = [a.name for a in self.agents]
         if len(set(names)) != len(names):
             raise ValueError("each agent name may appear once")
-        if self.entry.agent not in names:
+        if self.baseline == "applicable" and (not self.agents or self.entry is None):
+            raise ValueError("an applicable scenario needs agents and an entry")
+        if self.entry is not None and self.entry.agent not in names:
             raise ValueError(f"entry agent {self.entry.agent!r} is not in agents")
         unknown = set(self.fake_llm) - set(names)
         if unknown:

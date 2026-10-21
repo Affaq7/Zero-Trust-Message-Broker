@@ -1,0 +1,9 @@
+{
+  "id": "A10",
+  "title": "Token revoked mid-session, agent keeps sending",
+  "category": "attack",
+  "baseline": "not_applicable",
+  "not_applicable_reason": "Decision S6: direct mode never checks tokens, so a revocation cannot be observed; running it would only repeat A6.",
+  "expected_decision": "DENY (identity reason code)",
+  "entitled_parties": null
+}

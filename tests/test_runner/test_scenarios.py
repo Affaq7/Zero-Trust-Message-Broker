@@ -80,6 +80,19 @@ def test_invalid_scenarios_rejected(tmp_path, change):
         load_scenario(write(tmp_path, "bad.json", {**EXAMPLE, **change}))
 
 
+def test_not_applicable_needs_no_agents_or_entry(tmp_path):
+    data = {"id": "X4", "title": "Example not applicable", "category": "attack",
+            "baseline": "not_applicable", "not_applicable_reason": "needs the broker"}
+    s = load_scenario(write(tmp_path, "x4.json", data))
+    assert s.agents == [] and s.entry is None
+
+
+def test_applicable_still_needs_agents_and_entry(tmp_path):
+    data = {"id": "X5", "title": "Example", "category": "normal"}
+    with pytest.raises(ScenarioError, match="needs agents and an entry"):
+        load_scenario(write(tmp_path, "x5.json", data))
+
+
 def test_not_applicable_with_reason(tmp_path):
     s = load_scenario(write(tmp_path, "x3.json", {**EXAMPLE, "id": "X3", "baseline": "not_applicable",
                                                    "not_applicable_reason": "needs the broker"}))
