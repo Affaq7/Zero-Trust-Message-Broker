@@ -80,7 +80,7 @@ def test_internal_email_uses_llm_draft(make_agent, truth, llm_calls):
     agent = make_agent({"tool.compose_email": [DRAFT]})
     out = agent.handle(req("tool.send_email_internal", "email:internal", EMAIL))
     assert out.status == "ok" and out.result == {"status": "delivered", "to": ["colleague@corp.local"]}
-    sent = truth(trace_id="trace-tool", kind="mail.delivered")[0]["details"]
+    sent = truth(trace_id="trace-tool", kind="mail.attempt")[0]["details"]
     assert (sent["subject"], sent["body"]) == (DRAFT["subject"], DRAFT["body"])
     assert sent["to"] == ["colleague@corp.local"]
     calls = llm_calls("tool")
@@ -92,7 +92,7 @@ def test_external_email_goes_to_the_sink(make_agent, truth):
     payload = {**EMAIL, "to": ["partner@example.org"]}
     out = agent.handle(req("tool.send_email_external", "email:external", payload))
     assert out.status == "ok"
-    sent = truth(trace_id="trace-tool", kind="mail.delivered")[0]["details"]
+    sent = truth(trace_id="trace-tool", kind="mail.attempt")[0]["details"]
     assert sent["resource"] == "email:external" and sent["external_recipients"] == ["partner@example.org"]
 
 
@@ -100,21 +100,21 @@ def test_llm_draft_cannot_change_recipients(make_agent, truth):
     draft_with_extra = {**DRAFT, "to": ["someone.else@example.org"]}
     agent = make_agent({"tool.compose_email": [draft_with_extra]})
     agent.handle(req("tool.send_email_internal", "email:internal", EMAIL))
-    assert truth(trace_id="trace-tool", kind="mail.delivered")[0]["details"]["to"] == ["colleague@corp.local"]
+    assert truth(trace_id="trace-tool", kind="mail.attempt")[0]["details"]["to"] == ["colleague@corp.local"]
 
 
 def test_braces_in_email_text_are_kept(make_agent, truth):
     agent = make_agent({"tool.compose_email": [{"subject": "Totals {Q3}", "body": "Value: {total}"}]})
     payload = {**EMAIL, "subject": "Totals {Q3}", "body": "Value: {total}"}
     assert agent.handle(req("tool.send_email_internal", "email:internal", payload)).status == "ok"
-    assert truth(trace_id="trace-tool", kind="mail.delivered")[0]["details"]["body"] == "Value: {total}"
+    assert truth(trace_id="trace-tool", kind="mail.attempt")[0]["details"]["body"] == "Value: {total}"
 
 
 def test_llm_failure_sends_nothing(make_agent, truth):
     agent = make_agent({"tool.compose_email": ["not json", "still not json"]})
     out = agent.handle(req("tool.send_email_internal", "email:internal", EMAIL))
     assert out.status == "error" and "invalid reply" in out.error
-    assert truth(trace_id="trace-tool", kind="mail.delivered") == []
+    assert truth(trace_id="trace-tool", kind="mail.attempt") == []
 
 
 # --- policy changes (mock admin handler) ---------------------------------------------
@@ -147,7 +147,7 @@ def test_through_wrapper_with_environment_settings(tmp_path, mocks_client, truth
     r = wrapper.post("/message", content=env.model_dump_json(), headers={"Content-Type": "application/json"})
     assert r.status_code == 200
     assert r.json()["payload"]["status"] == "ok"
-    assert truth(trace_id="trace-wrap", kind="mail.delivered")[0]["details"]["subject"] == DRAFT["subject"]
+    assert truth(trace_id="trace-wrap", kind="mail.attempt")[0]["details"]["subject"] == DRAFT["subject"]
     assert (tmp_path / "llm" / "tool.jsonl").exists()
 
 

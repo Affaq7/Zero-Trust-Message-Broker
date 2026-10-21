@@ -181,15 +181,23 @@ def create_app(settings: MockSettings) -> FastAPI:
 
     @app.post("/mail/send")
     def send_mail(req: ServiceRequest, trace_id: TraceHeader = None):
+        p = req.payload
+
+        def failed(error: str) -> None:
+            world.truth.append("mail.attempt", trace_id, mail.attempt_record(
+                req.resource, p.get("to"), p.get("subject"), p.get("body"), status="failed", error=error))
+
         try:
             mail.kind_from_resource(req.resource)
-            payload = EmailPayload.model_validate(req.payload)
+            payload = EmailPayload.model_validate(p)
         except ValidationError as exc:
+            failed("invalid payload")
             return _invalid(exc)
         except mail.MailError as exc:
+            failed(str(exc))
             return _error(exc.status, str(exc))
-        record = mail.delivery_record(req.resource, payload.to, payload.subject, payload.body)
-        world.truth.append("mail.delivered", trace_id, record)
+        world.truth.append("mail.attempt", trace_id, mail.attempt_record(
+            req.resource, payload.to, payload.subject, payload.body, status="delivered"))
         return {"status": "delivered", "to": payload.to}
 
     # --- admin ------------------------------------------------------------

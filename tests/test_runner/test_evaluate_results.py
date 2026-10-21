@@ -71,12 +71,16 @@ def test_timeout_is_never_completed():
 
 
 def test_ground_truth_range_and_details():
-    s = scenario(success_criteria=[{"type": "ground_truth_count", "kind": "mail.delivered",
-                                    "details": {"external_recipients": []}, "min": 1, "max": 1}])
-    one = [{"kind": "mail.delivered", "details": {"external_recipients": []}}]
+    s = scenario(success_criteria=[{"type": "ground_truth_count", "kind": "mail.attempt",
+                                    "details": {"status": "delivered", "external_recipients": []},
+                                    "min": 1, "max": 1}])
+    one = [{"kind": "mail.attempt", "details": {"status": "delivered", "external_recipients": []}}]
     assert evaluate(s, outcome(ground_truth=one)).task_completed is True
     assert evaluate(s, outcome(ground_truth=one * 2)).task_completed is False
-    other = [{"kind": "mail.delivered", "details": {"external_recipients": ["partner@example.org"]}}]
+    failed = [{"kind": "mail.attempt", "details": {"status": "failed", "external_recipients": []}}]
+    assert evaluate(s, outcome(ground_truth=failed)).task_completed is False
+    other = [{"kind": "mail.attempt", "details": {"status": "delivered",
+                                                  "external_recipients": ["partner@example.org"]}}]
     assert evaluate(s, outcome(ground_truth=other)).task_completed is False
 
 

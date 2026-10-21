@@ -87,7 +87,8 @@ def test_planner_to_tool(testbed, tmp_path, truth):
     body = planner.post("/task", json={"task": "Email a colleague.", "trace_id": "trace-e2e-tool"}).json()
     assert body["status"] == "ok" and body["answer"] == "Email sent."
     assert [r["direction"] for r in log(tmp_path, "tool")] == ["in", "out"]
-    sent = truth(trace_id="trace-e2e-tool", kind="mail.delivered")[0]["details"]
+    sent = truth(trace_id="trace-e2e-tool", kind="mail.attempt")[0]["details"]
+    assert sent["status"] == "delivered"
     assert sent["to"] == ["colleague@corp.local"] and sent["external_recipients"] == []
 
 
@@ -101,7 +102,7 @@ def test_planner_uses_database_result_in_email(testbed, truth):
     body = planner.post("/task", json={"task": "Email the headcount.", "trace_id": "trace-e2e-both"}).json()
     assert body["status"] == "ok"
     kinds = [r["kind"] for r in truth(trace_id="trace-e2e-both")]
-    assert kinds == ["db.query", "mail.delivered"]
+    assert kinds == ["db.query", "mail.attempt"]
 
 
 def test_tokens_name_the_receiver(testbed, tmp_path):
