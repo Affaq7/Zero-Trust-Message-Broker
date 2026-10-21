@@ -115,3 +115,15 @@ paths with pathlib relative to the file (never hard-code the absolute path).
 7. wrapper/: JSONL message log in logs/
 8. Manual curl.exe test with examples/dummy_request.json
 9. send_message() helper (direct -> receiver, broker -> broker)
+
+## Milestone 2 (in progress; decisions in docs/open-questions.md, M1-M14)
+Goal: mock services, five real agents, scenario runner, baseline runs in
+MODE=direct. Agents get JSON decisions from llama3:8b (no native tool
+calling); code performs actions. Scenario data (scenarios/source/) is
+runner-only: never commit or encode it until the user says so, and never
+let agents read it. Stage files by name (not `git add -A`) while it exists.
+Steps: 0 docs; 1 mock skeleton + seeded SQLite + ground truth; 2 DB
+endpoints; 3 file store + web fixtures; 4 mail sink + admin handler;
+5 venv check/split; 6 LLM layer + fake backend; 7 POST /task + stub tokens;
+8-12 tool, database, research, planner, malicious agents; 13 scenario
+schema; 14 runner; 15 results + metrics; 16 all scenarios; 17-18 live baseline.
