@@ -164,7 +164,8 @@ native programs.
 ### 3. Stop the server and clean up
 
 In terminal 1 press `Ctrl+C` (expect `Shutting down` ... `Finished server
-process`). The `$env:` variables stay set in that terminal until you close
+process`). On Windows a `KeyboardInterrupt`/`CancelledError` traceback after
+Ctrl+C is harmless: the server has stopped normally. The `$env:` variables stay set in that terminal until you close
 it, or remove them with:
 
 ```powershell
@@ -181,6 +182,20 @@ $env:MODE = "bogus"; $env:AGENT_NAME = "dummy"
 Expected: a traceback ending in
 `wrapper.config.ConfigError: MODE must be one of ('direct', 'broker'), got 'bogus'`
 and no "Uvicorn running" line. Then run `Remove-Item Env:MODE, Env:AGENT_NAME`.
+
+## Agent-to-agent messages (send_message)
+
+Agents send requests with `wrapper.send.send_message()`. The operator tells
+each wrapper where the other agents are with `AGENT_URLS` (comma-separated
+`name=url` pairs), for example:
+
+```powershell
+$env:AGENT_URLS = "dummy=http://127.0.0.1:8001,tool=http://127.0.0.1:8004"
+```
+
+The sender is the wrapper's own `AGENT_NAME`. In `MODE=direct` the request
+goes straight to the receiver's `/message`; `MODE=broker` is not implemented
+yet and raises an error.
 
 ## Message log
 

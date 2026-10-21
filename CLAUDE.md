@@ -52,9 +52,13 @@ token or the proof header. No scenario labels or trust scores in the log; the
 runner records labels separately.
 
 ## Sending messages
-Agents send through `send_message()`. It builds the envelope and posts it to
-the receiver in direct mode, or to the broker in broker mode. It reads MODE
-from the operator-set environment only.
+Agents send through `wrapper.send.send_message()`. It builds the envelope with
+new_request() (sender = this process's AGENT_NAME) and posts it to the
+receiver's wrapper in direct mode; broker mode raises "not implemented" for
+now. MODE and the receiver URLs (AGENT_URLS="name=url,...") are read from the
+operator-set environment at call time, never from a message. The caller passes
+the token (Authorization: Bearer); the X-Agent-Proof header is the PROOF STUB.
+Neither is logged. Tests inject in-process transports via the `client` argument.
 
 ## Secrets
 - Never write real keys or secrets into files.

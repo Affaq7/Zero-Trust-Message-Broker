@@ -61,3 +61,11 @@ code follows, but it is not final until the named owner confirms it.
 | Q23 | Starlette/httpx deprecation warning | The test client warns that using `httpx` with `starlette.testclient` is deprecated and suggests `httpx2`. Ignored for now; no new dependency. | Revisit when dependency versions are pinned (user) |
 | Q24 | Unparseable envelopes in the log | Envelopes that fail to parse (HTTP 422) are not logged, since there is no envelope to store. Possible later addition: a content-free "unparseable" record (time, agent, no body) so malformed-message attacks can be counted. | Later (user) |
 | Q25 | Log file per agent | One `logs/<AGENT_NAME>.jsonl` per agent, written by one uvicorn worker. Several workers for the same agent could interleave lines. | Decided (user): one worker per agent |
+
+## Raised during implementation (step 9)
+
+| # | Topic | Current proposal | Status |
+|---|---|---|---|
+| Q26 | AGENT_URLS format | `AGENT_URLS="name=http://host:port,..."`, parsed at wrapper startup and again at each `send_message()` call; an invalid value fails at startup. In broker mode it will be replaced or joined by a broker URL (not defined yet). | Provisional, owner to confirm (user) |
+| Q27 | What send_message() checks on the reply | Only that the reply is HTTP 200, parses as an `Envelope`, has `msg_type: "response"` and `parent_msg_id` = the request's `msg_id`. It does not judge the content (no payload schema or policy checks), so poisoned replies still reach the agent in direct mode. | Provisional, owner to confirm (user) |
+| Q28 | Sender-side logging | `send_message()` writes nothing; the receiving wrapper logs the request ("in") and its response ("out"). A sender-side record could be added if the runner needs to see requests that never arrived (e.g. unreachable receiver). | Later (user) |
