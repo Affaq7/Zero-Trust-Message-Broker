@@ -8,7 +8,7 @@ Machine: Intel i5-1145G7, 16 GB RAM, no NVIDIA GPU; Ollama runs llama3:8b
 | 2026-10-21 | Live LLM test (`pytest -m ollama`), one JSON decision, **cold start** | **35.1 s** | Measured by the user; Ollama had just started, so it includes loading the model. |
 | 2026-10-21 | Raw Ollama call, tiny prompt, cold | 17.5 s (14.1 s of it loading the model) | Prompt eval ~25 tokens/s, generation ~5-7 tokens/s. |
 | 2026-10-21 | Raw Ollama call, tiny JSON prompt, warm | 3.4 s | |
-| 2026-10-21 | Warm planner call (user's figure) | ~13-14 s | Reported by the user. |
+| 2026-10-21 | Warm planner call (from the live run's LLM call logs) | 16.8-24.2 s, median about 19 s | Run 20261021T205331Z, see below. |
 | 2026-10-21 | First LLM call after the model loads | ~35 s | As in the cold-start row above. |
 
 ## Live baseline runs: N1 and N3 (run 20261021T205331Z)
@@ -29,9 +29,6 @@ Per-call durations from the run's LLM call logs (warm, no model load):
 | planner forced final answer (step 5) | 7.8-9.0 s |
 | database summary | 6.2-6.7 s |
 | tool email draft | 8.2-8.3 s |
-
-The user's ~13-14 s warm planner figure is lower than the logged 17-24 s;
-both are recorded until a dedicated warm measurement settles it.
 
 **Repeated-query note (N1):** every N1 run used all 4 planner steps plus
 the forced answer: step 1 named the action `db:query_aggregate` (colon, rejected
