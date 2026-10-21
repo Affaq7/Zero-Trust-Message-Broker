@@ -1,12 +1,13 @@
 """Maps the agent implementation name (AGENT_IMPL, default AGENT_NAME) to its code."""
 
-from agents import dummy
+from agents import dummy, tool
 from agents.base import AgentFn, TaskFn
 from wrapper.config import ConfigError
 
 # Message handlers (POST /message).
 AGENTS: dict[str, AgentFn] = {
     "dummy": dummy.handle,
+    "tool": tool.handle,
 }
 
 # Task handlers (POST /task), only for agents that can start work for the user.
