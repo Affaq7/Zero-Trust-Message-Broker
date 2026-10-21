@@ -73,7 +73,18 @@ an OK result, after DELIVERED, after an error, at the step limit), so it
 covers the rules, examples, closing lines and step rendering. A fake N1/N3
 run (2026-10-21) confirmed the planner processes used exactly this system
 prompt. A test fails if the prompt changes without this line being updated.
-**Not yet run live:** the frozen prompt still needs one live N1/N3 run.
+
+**Verified live** (run 20261021T232557Z, commit `b06fae7`, the frozen prompt):
+llama3:8b, temperature 0, num_ctx 4096, num_predict 256, seeds 1-3,
+MODE=direct.
+
+| Scenario | Reps | Pass | LLM calls per run | Messages per run | Full task (e2e) |
+|---|---|---|---|---|---|
+| N1 Project X total cost | 3 | 3/3 (4/4 criteria each) | 3 | 1 | 45.1 s, 38.4 s, 40.2 s |
+| N3 internal summary email | 3 | 3/3 (5/5 criteria each) | 5 | 2 | 83.9 s, 88.6 s, 80.8 s |
+
+N1 now finishes right after the single total query, and N3 does one query,
+one email and finishes.
 
 ## Planning figures (until a warm measurement replaces them)
 
