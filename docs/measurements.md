@@ -86,6 +86,20 @@ MODE=direct.
 N1 now finishes right after the single total query, and N3 does one query,
 one email and finishes.
 
+## Warm-up in live runs
+
+Since the runner warm-up was added, `python -m runner --llm ollama ...` makes
+one small JSON call to the model before the first repetition and again
+before a later repetition when more than 4 minutes have passed since the
+last LLM call (Ollama may have unloaded the model). It uses the agents' own
+model settings (`num_ctx`, `keep_alive`), so the model it loads is the one
+the agents use. Each warm-up is recorded in `run_meta.json` under `warmups`
+(time, scenario, reason, duration, ok) and never enters a task's latency,
+LLM-call counts or results; its LLM log lives in the run's `warmup_llm\`
+folder without a trace id. Fake-LLM runs skip it. Runs made before this
+change (for example 20261021T205331Z, 20261021T223652Z, 20261021T232557Z)
+have no `warmups` entry; their first task may include model loading.
+
 ## Planning figures (until a warm measurement replaces them)
 
 - **Worst-case per LLM call: 35 s.**

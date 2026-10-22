@@ -266,6 +266,16 @@ email). Run from the repo root:
 & ".\.venv\Scripts\python.exe" -m runner --llm ollama --scenario N3 --reps 1 --max-minutes 30
 ```
 
+**Warm-up (live runs only).** With `--llm ollama` the runner first makes one
+small call to the model, so the first measured task does not include model
+loading (about 35-90 s after an idle period, `docs\measurements.md`). It
+warms up again before a later repetition if more than 4 minutes have passed
+since the last LLM call. Each warm-up (time, scenario, duration) is recorded
+in `run_meta.json` under `warmups` and printed, but it is never part of any
+task's latency or results. Fake runs skip it (`warmup_note` says so). If the
+warm-up call fails (Ollama not running), the run stops before any task and
+can be continued with `--resume`.
+
 Expected for the fake run: one line per scenario ending in
 `completed completed=True <ms> ms`, then the results folder. Open
 `results\<run_id>\summary.csv` for the table. A live run can fail where the

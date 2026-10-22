@@ -10,6 +10,12 @@
   --dry-run          only load and check the scenario files
   --debug-prompts    write each planner prompt to the run's logs (off by default)
 
+With --llm ollama the runner first makes one small warm-up call to the model
+(and again before a later repetition if more than 4 minutes passed since the
+last LLM call), so no task includes model loading. Warm-ups are recorded in
+run_meta.json ("warmups") and never counted in task results; fake runs skip
+them.
+
 Results go to results/<run_id>/ (gitignored). Ctrl+C stops after cleaning
 up the current repetition's processes and keeps the finished rows.
 """
@@ -27,6 +33,7 @@ from runner.evaluate import evaluate
 from runner.results import ResultsWriter, scenario_checksum
 from runner.run import rep_dir_for, run_repetition
 from runner.scenarios import DEFAULT_SCENARIOS_DIR, REPO_ROOT, ScenarioError, load_scenarios
+from runner.warmup import Warmup, WarmupFailed, make_warmup_client, warm_up_call
 
 DEFAULT_RESULTS_DIR = REPO_ROOT / "results"
 
@@ -103,6 +110,8 @@ def main(argv=None) -> int:
         print(f"run {run_id} -> {writer.dir}")
     done_runs, done_na = writer.done_keys()
 
+    warmup = Warmup(llm_backend, lambda: warm_up_call(make_warmup_client(llm, writer.dir / "warmup_llm")))
+    warmup_note = None if warmup.enabled else f"skipped: LLM backend is {llm_backend}"
     deadline = time.monotonic() + args.max_minutes * 60 if args.max_minutes else None
     stopped = False
     try:
@@ -123,9 +132,13 @@ def main(argv=None) -> int:
                     if partial.exists():      # left by an interrupted repetition
                         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
                         partial.rename(partial.with_name(f"{partial.name}.partial-{stamp}"))
+                    if (done := warmup.before_scenario(s.id)):
+                        print(f"warm-up before {s.id}: {done['duration_s']} s ({done['reason']}); "
+                              f"not counted in any task")
                     outcomes = run_repetition(s, rep, writer.dir, concurrency=conc,
                                               llm_backend=llm_backend, llm_base_url=llm.base_url,
                                               debug_prompts=args.debug_prompts)
+                    warmup.note_repetition(outcomes)
                     for o in outcomes:
                         ev = evaluate(s, o)
                         writer.add(s, o, ev)
@@ -133,12 +146,16 @@ def main(argv=None) -> int:
                               f"completed={ev.task_completed} {o.latency_ms} ms")
     except StopIteration:
         print("time budget reached; stopping")
+    except WarmupFailed as exc:
+        stopped = True
+        print(f"warm-up failed ({exc}); stopping before any task is affected "
+              f"(carry on later with: python -m runner --resume {writer.run_id})", file=sys.stderr)
     except KeyboardInterrupt:
         stopped = True
         print(f"interrupted; processes stopped, finished rows kept "
               f"(carry on with: python -m runner --resume {writer.run_id})")
     finally:
-        writer.finish(stopped_early=stopped)
+        writer.finish(stopped_early=stopped, warmups=warmup.records, warmup_note=warmup_note)
     print(f"results: {writer.dir}")
     return 130 if stopped and deadline is None else 0
 

@@ -134,9 +134,14 @@ class ResultsWriter:
         na = {r["scenario_id"] for r in self.rows if r["status"] == "not_applicable"}
         return runs, na
 
-    def finish(self, stopped_early: bool = False) -> None:
+    def finish(self, stopped_early: bool = False, warmups: list[dict] | None = None,
+               warmup_note: str | None = None) -> None:
         meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
         meta.update(ended_at=_now(), stopped_early=stopped_early, rows=len(self.rows))
+        # Warm-up calls are run metadata only, never part of any task's results.
+        meta["warmups"] = meta.get("warmups", []) + list(warmups or [])
+        if warmup_note:
+            meta["warmup_note"] = warmup_note
         self.meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
         self.write_summary()
 
