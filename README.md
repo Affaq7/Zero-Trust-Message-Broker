@@ -255,8 +255,10 @@ email). Run from the repo root:
 # Check the scenario files (no processes started)
 & ".\.venv\Scripts\python.exe" -m runner --dry-run
 
-# Fake LLM: scripted replies from the scenario file, a few seconds each.
+# Fake LLM: scripted replies from the scenario file; no model is called.
 # Checks the whole pipeline (processes, messages, mock world, evaluation).
+# Takes seconds to about half a minute per scenario, depending on machine
+# load (N1 took 4-14 s and N3 8-27 s on the development machine).
 & ".\.venv\Scripts\python.exe" -m runner --scenario N1 --scenario N3 --reps 1
 
 # Live LLM: start Ollama with llama3:8b first (LLM_BASE_URL, default
