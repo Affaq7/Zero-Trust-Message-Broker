@@ -291,6 +291,15 @@ With several run ids it also writes a combined report to `results\report-<time>\
 & ".\.venv\Scripts\python.exe" -m runner.report 20261021T232557Z
 ```
 
+Warm-call measurement on the live LLM (start Ollama first): one warm-up call,
+then N planner-sized calls; median, min, max, spread and mean are appended
+to the "Warm planner call measurements" table in `docs\measurements.md`
+(`--no-write` only prints). About 20 s per call on this CPU-only machine:
+
+```powershell
+& ".\.venv\Scripts\python.exe" -m runner.measure_llm --calls 10
+```
+
 Scenario files go in `scenarios\` (one JSON file each). To debug a single
 agent by hand, start it with uvicorn as in the manual test above.
 
