@@ -97,3 +97,13 @@ one email and finishes.
 - Run budgets: 19 scenarios x 1 repetition about 1.1 h worst case;
   x 3 about 3.3 h; x 10 about 11 h, so the 10-repetition runs happen in
   watched blocks with `--max-minutes` and `--resume` (M6).
+
+## Warm planner call measurements
+
+Written by `python -m runner.measure_llm`: one warm-up call (not counted), then N planner-sized calls (frozen planner system prompt + a first-step user prompt, temperature 0). Wall-clock seconds per call.
+
+| Date (UTC) | Calls | Median | Min | Max | Spread (max-min) | Mean | Failed | Warm-up call | Model | num_ctx | Prompt SHA-256 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-10-22 11:50 | 10 | 15.7 s | 15.2 s | 16.7 s | 1.6 s | 15.7 s | 0 | 87.8 s | llama3:8b | 4096 | `0d22529bac9f` |
+
+Warm-up time after an idle period depends on loading the model from disk; do not use it as a performance figure.
