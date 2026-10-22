@@ -51,6 +51,11 @@ def _git_commit() -> str:
         return "unknown"
 
 
+def _prompt_fingerprint() -> str:
+    from agents.planner import prompt_fingerprint   # imports LangGraph; only when a run starts
+    return prompt_fingerprint()
+
+
 def scenario_checksum(s: Scenario) -> str:
     return hashlib.sha256(s.model_dump_json().encode("utf-8")).hexdigest()
 
@@ -95,6 +100,7 @@ class ResultsWriter:
         meta = {
             "run_id": self.run_id, "started_at": _now(), "ended_at": None,
             "git_commit": _git_commit(), "mode": "direct",
+            "planner_prompt_sha256": _prompt_fingerprint(),
             "llm": {"backend": llm_backend, "model": llm.model, "num_ctx": llm.num_ctx,
                     "num_predict": llm.num_predict, "temperature": 0.0,
                     "seed": "repetition number", "base_url": llm.base_url},

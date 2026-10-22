@@ -281,6 +281,16 @@ skipped, and it refuses if a scenario file changed since the run started:
 & ".\.venv\Scripts\python.exe" -m runner --resume <run_id>
 ```
 
+Baseline report for one or more runs: writes `report.md` and `report.csv` into
+each run folder (per scenario: runs, task-completed rate, median/mean/max
+latency, median LLM calls and messages; not-applicable scenarios with their
+reasons; LLM settings, seeds, git commit and planner prompt fingerprint).
+With several run ids it also writes a combined report to `results\report-<time>\`:
+
+```powershell
+& ".\.venv\Scripts\python.exe" -m runner.report 20261021T232557Z
+```
+
 Scenario files go in `scenarios\` (one JSON file each). To debug a single
 agent by hand, start it with uvicorn as in the manual test above.
 

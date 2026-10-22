@@ -136,6 +136,8 @@ def test_writer_files_and_columns(tmp_path):
 
     meta = json.loads((w.dir / "run_meta.json").read_text(encoding="utf-8"))
     assert meta["mode"] == "direct" and meta["llm"]["num_ctx"] == 4096 and meta["llm"]["temperature"] == 0.0
+    from agents.planner import prompt_fingerprint
+    assert meta["planner_prompt_sha256"] == prompt_fingerprint()
     assert meta["not_applicable"] == {"X2": "needs the broker"}
     assert set(meta["scenarios"]) == {"X1", "X2"} and meta["ended_at"] and meta["rows"] == 2
 
