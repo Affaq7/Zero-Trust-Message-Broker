@@ -273,6 +273,14 @@ fake one passes (the model may choose other actions); `results.csv` shows
 which criteria failed, and `results\<run_id>\<scenario>\...\processes\`
 holds each process's log.
 
+If a run is interrupted (Ctrl+C, `--max-minutes`, a crash), carry it on in
+the same folder; scenarios and repetitions already in its `results.csv` are
+skipped, and it refuses if a scenario file changed since the run started:
+
+```powershell
+& ".\.venv\Scripts\python.exe" -m runner --resume <run_id>
+```
+
 Scenario files go in `scenarios\` (one JSON file each). To debug a single
 agent by hand, start it with uvicorn as in the manual test above.
 

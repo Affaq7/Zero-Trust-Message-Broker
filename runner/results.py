@@ -55,6 +55,22 @@ def scenario_checksum(s: Scenario) -> str:
     return hashlib.sha256(s.model_dump_json().encode("utf-8")).hexdigest()
 
 
+def _row_from_csv(row: dict[str, str]) -> dict[str, Any]:
+    """A results.csv row back in the types the writer uses (for resume and summaries)."""
+    def num(v):
+        return int(v) if v not in ("", None) else None
+
+    def flag(v):
+        return {"true": True, "false": False}.get(v)
+    out: dict[str, Any] = {k: (v if v != "" else None) for k, v in row.items()}
+    for k in ("rep", "concurrency", "slot", "e2e_latency_ms", "sensitive_hits", "messages",
+              "llm_calls", "llm_time_ms", "criteria_passed", "criteria_total"):
+        out[k] = num(row.get(k, ""))
+    for k in ("task_completed", "attack_succeeded", "over_exposure"):
+        out[k] = flag(row.get(k, ""))
+    return out
+
+
 def _cell(value: Any) -> Any:
     if value is None:
         return ""
@@ -91,6 +107,26 @@ class ResultsWriter:
             "stopped_early": False,
         }
         self.meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+    def resume(self) -> dict:
+        """Reopen an existing run: load its rows and record this resume in run_meta.json."""
+        meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
+        if self.csv_path.exists():
+            with open(self.csv_path, encoding="utf-8", newline="") as f:
+                self.rows = [_row_from_csv(r) for r in csv.DictReader(f)]
+        commit = _git_commit()
+        meta.setdefault("resumes", []).append({"at": _now(), "git_commit": commit})
+        if commit != meta.get("git_commit"):
+            meta["resumed_on_other_commit"] = True
+        self.meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        return meta
+
+    def done_keys(self) -> tuple[set[tuple[str, int, int]], set[str]]:
+        """(scenario_id, rep, concurrency) already recorded, and not_applicable ids recorded."""
+        runs = {(r["scenario_id"], r["rep"], r["concurrency"]) for r in self.rows
+                if r["status"] != "not_applicable"}
+        na = {r["scenario_id"] for r in self.rows if r["status"] == "not_applicable"}
+        return runs, na
 
     def finish(self, stopped_early: bool = False) -> None:
         meta = json.loads(self.meta_path.read_text(encoding="utf-8"))

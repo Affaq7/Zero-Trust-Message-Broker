@@ -83,12 +83,16 @@ def _send_task(url: str, task: str, trace_id: str, timeout_s: int) -> tuple[str,
     return "completed", r.json(), None
 
 
+def rep_dir_for(run_dir: Path, scenario_id: str, concurrency: int, rep: int) -> Path:
+    return Path(run_dir) / scenario_id / f"c{concurrency}" / f"rep{rep:02d}"
+
+
 def run_repetition(scenario: Scenario, rep: int, run_dir: Path, *, concurrency: int = 1,
                    llm_backend: str = "fake", llm_base_url: str = "http://localhost:11434",
                    debug_prompts: bool = False) -> list[TaskOutcome]:
     if scenario.baseline != "applicable":
         raise ValueError(f"{scenario.id} is not applicable in direct mode; nothing to run")
-    rep_dir = run_dir / f"{scenario.id}" / f"c{concurrency}" / f"rep{rep:02d}"
+    rep_dir = rep_dir_for(run_dir, scenario.id, concurrency, rep)
     config = TestbedConfig(
         agents=[a.model_dump() for a in scenario.agents], run_dir=rep_dir, seed=rep,
         llm_backend=llm_backend, fake_llm=scenario.fake_llm, llm_base_url=llm_base_url,
