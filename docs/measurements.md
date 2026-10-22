@@ -93,7 +93,7 @@ one email and finishes.
   summary, tool email draft), so worst case **about 3.5 minutes** per run.
   Observed live (N1, N3): 7-8 calls and 100-120 s per run.
 - Timeouts: LLM call 180 s (about 5x the worst case), one `send_message()`
-  hop 600 s, one scenario run 900 s.
+  hop 60 s (`wrapper/send.py` default), one scenario run 900 s.
 - Run budgets: 19 scenarios x 1 repetition about 1.1 h worst case;
   x 3 about 3.3 h; x 10 about 11 h, so the 10-repetition runs happen in
   watched blocks with `--max-minutes` and `--resume` (M6).
