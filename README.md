@@ -5,9 +5,24 @@ a common HTTP wrapper, a scenario runner, and baseline runs without a broker
 (`MODE=direct`). See `CLAUDE.md` for project rules and `docs/open-questions.md`
 for contract details that are still provisional.
 
+All data is fictional and everything runs on this machine (localhost): the
+agents talk to each other and to a mock company (database, files, web pages,
+mail sink, admin handler); nothing is sent to a real service or person.
+
+## Quick start
+
+1. [Set up the virtual environment](#setup-windows-powershell) and run the tests.
+2. [Run N1 and N3 with the fake LLM](#scenario-runner): a few seconds each, no model needed.
+3. [Run them with the live LLM](#scenario-runner): needs Ollama with llama3:8b.
+4. [Write a report](#scenario-runner) from the run, and [resume](#scenario-runner) an interrupted run.
+5. Read the [documentation map](#documentation) and the [known limits](#known-limits-of-the-testbed).
+
 ## Setup (Windows, PowerShell)
 
-Requires Python 3.12 (`winget install --id Python.Python.3.12 -e`).
+Requires Windows with PowerShell, Git and Python 3.12
+(`winget install --id Python.Python.3.12 -e`). Live runs also need Ollama
+(https://ollama.com) with the model pulled once: `ollama pull llama3:8b`
+(it serves on `http://localhost:11434`; set `LLM_BASE_URL` if yours differs).
 
 The repo path contains a space, so always quote paths. All commands below are
 run from the repo root.
@@ -27,9 +42,11 @@ py -3.12 -m venv ".venv"
 #    Re-run after adding a new top-level package such as wrapper/ or agents/.
 & ".\.venv\Scripts\python.exe" -m pip install -e ".[dev,agents]" -c "constraints.txt"
 
-# 4. Run the tests
+# 4. Run the tests (several hundred, about 5 minutes; some start real processes)
 & ".\.venv\Scripts\python.exe" -m pytest
 ```
+
+Everything should pass; one test is skipped (the live Ollama test below).
 
 Optional live LLM test (skipped by default; start Ollama with llama3:8b first):
 
@@ -179,8 +196,8 @@ native programs.
 
 In terminal 1 press `Ctrl+C` (expect `Shutting down` ... `Finished server
 process`). On Windows a `KeyboardInterrupt`/`CancelledError` traceback after
-Ctrl+C is harmless: the server has stopped normally. The `$env:` variables stay set in that terminal until you close
-it, or remove them with:
+Ctrl+C is harmless: the server has stopped normally. The `$env:` variables
+stay set in that terminal until you close it, or remove them with:
 
 ```powershell
 Remove-Item Env:MODE, Env:AGENT_NAME
@@ -244,12 +261,21 @@ curl.exe -s -X POST "http://127.0.0.1:8090/reset"
 The runner starts the mock services and the agents of each scenario as
 separate processes, sends the task, collects envelopes, ground truth and
 LLM calls, evaluates the success criteria and writes `results\<run_id>\`
-(gitignored): `run_meta.json`, `results.csv`, `events.jsonl`,
-`ground_truth.jsonl`, `summary.csv`. All processes are stopped afterwards,
-also after Ctrl+C.
+(gitignored): `run_meta.json` (settings, git commit, prompt fingerprint,
+warm-ups), `results.csv` (one row per task), `criteria.jsonl` (every success
+check and the final answer), `events.jsonl`, `ground_truth.jsonl` and
+`summary.csv`. All processes are stopped afterwards, also after Ctrl+C.
 
-Encoded so far: **N1** (Project X total cost) and **N3** (internal summary
-email). Run from the repo root:
+Encoded so far (7 of the 19 scenarios, in `scenarios\`):
+
+| Scenario | What | In direct mode |
+|---|---|---|
+| **N1** | planner asks the database for the total cost of Project X | runs |
+| **N3** | planner emails an internal summary to one colleague | runs |
+| **A9, A10, A11, A12, A14** | attacks that need the broker or a token check | **not applicable**: recorded as `not_applicable` with the reason, never run, left out of every rate |
+
+The other 12 are not built yet; see [Known limits](#known-limits-of-the-testbed).
+Run from the repo root:
 
 ```powershell
 # Check the scenario files (no processes started)
@@ -261,12 +287,20 @@ email). Run from the repo root:
 # load (N1 took 4-14 s and N3 8-27 s on the development machine).
 & ".\.venv\Scripts\python.exe" -m runner --scenario N1 --scenario N3 --reps 1
 
+# Every encoded scenario, 3 repetitions each (the not-applicable ones are only recorded):
+& ".\.venv\Scripts\python.exe" -m runner --reps 3
+
 # Live LLM: start Ollama with llama3:8b first (LLM_BASE_URL, default
-# http://localhost:11434). CPU-only: about 2-4 minutes per scenario run
-# (worst case 35 s per LLM call, docs/measurements.md).
-& ".\.venv\Scripts\python.exe" -m runner --llm ollama --scenario N1 --reps 1 --max-minutes 30
-& ".\.venv\Scripts\python.exe" -m runner --llm ollama --scenario N3 --reps 1 --max-minutes 30
+# http://localhost:11434). CPU-only: about 40 s (N1) to 85 s (N3) per task
+# once the model is loaded (docs/measurements.md).
+& ".\.venv\Scripts\python.exe" -m runner --llm ollama --scenario N1 --scenario N3 --reps 3 --max-minutes 45
+
+# Add --debug-prompts to save every planner prompt and the model's reply
+# (stepNN.txt / stepNN.reply.json) under the run's logs\prompts folder.
 ```
+
+Each command prints the run id and one line per task; the results are in
+`results\<run_id>\`.
 
 **Warm-up (live runs only).** With `--llm ollama` the runner first makes one
 small call to the model, so the first measured task does not include model
@@ -278,12 +312,13 @@ task's latency or results. Fake runs skip it (`warmup_note` says so). If the
 warm-up call fails (Ollama not running), the run stops before any task and
 can be continued with `--resume`.
 
-Expected for the fake run: one line per scenario ending in
+Expected for a fake run: one line per not-applicable scenario
+(`A9: not applicable (<reason>)`), one line per task ending in
 `completed completed=True <ms> ms`, then the results folder. Open
 `results\<run_id>\summary.csv` for the table. A live run can fail where the
-fake one passes (the model may choose other actions); `results.csv` shows
-which criteria failed, and `results\<run_id>\<scenario>\...\processes\`
-holds each process's log.
+fake one passes (the model may choose other actions); `results.csv` has a
+`criteria_failed` column and `criteria.jsonl` the detail of every check, and
+`results\<run_id>\<scenario>\...\processes\` holds each process's log.
 
 If a run is interrupted (Ctrl+C, `--max-minutes`, a crash), carry it on in
 the same folder; scenarios and repetitions already in its `results.csv` are
@@ -300,8 +335,10 @@ reasons; LLM settings, seeds, git commit and planner prompt fingerprint).
 With several run ids it also writes a combined report to `results\report-<time>\`:
 
 ```powershell
-& ".\.venv\Scripts\python.exe" -m runner.report 20261021T232557Z
+& ".\.venv\Scripts\python.exe" -m runner.report <run_id>
 ```
+
+(`<run_id>` is the folder name under `results\`, e.g. `20261021T232557Z`.)
 
 Warm-call measurement on the live LLM (start Ollama first): one warm-up call,
 then N planner-sized calls; median, min, max, spread and mean are appended
@@ -328,6 +365,58 @@ could interleave lines.
 
 Use `curl.exe`, not `curl`. In Windows PowerShell `curl` is an alias for
 `Invoke-WebRequest` and takes different arguments.
+
+## Documentation
+
+| File | What is in it |
+|---|---|
+| `docs/open-questions.md` | every contract and design question, with its status (decided, provisional, open) and who must confirm it |
+| `docs/scenario-coverage.md` | message paths for all 19 scenarios, which ones apply in direct mode, entitled parties, the four gaps (G1-G4) and the contract changes proposed for the teammates |
+| `docs/broker-integration.md` | for the broker developer: where the broker sits, what `MODE=broker` does today, envelopes, headers, what the testbed expects back, and what is still open |
+| `docs/agents-and-roles.md` | which agents exist, their roles, what each may call and serve |
+| `docs/measurements.md` | timings, live N1/N3 results, the frozen planner prompt hash, warm-call measurements |
+| `docs/milestone-1-summary.md` | what Milestone 1 built and how a message flows |
+| `contracts/` | the shared definitions (envelope, action catalog, payload schemas, token claims); not changed without approval |
+| `CLAUDE.md` | the project rules for anyone (or any assistant) working in this repo |
+
+## Known limits of the testbed
+
+- **One small model.** All live results are from llama3:8b (4-bit) on a
+  CPU-only laptop, temperature 0, one seed per repetition. Other models or
+  hardware can behave differently. llama3:8b has no native tool calling, so
+  agents ask it for small JSON decisions and ordinary code performs the actions.
+- **Only N1 and N3 have live results**, 3 repetitions each, on llama3:8b with
+  the frozen planner prompt (`docs/measurements.md`). Changing the planner
+  prompt breaks a test on purpose until the new hash is recorded there.
+- **7 of 19 scenarios are encoded.** N1 and N3 run. **A9, A10, A11, A12 and
+  A14 are not applicable in direct mode** (they need the broker's denials,
+  quarantine, encrypted link or network isolation, or a token/proof check that
+  direct mode does not have); they are recorded and left out of every rate.
+  A13 *is* applicable in direct mode but not built yet.
+- **12 scenarios are not built yet**, for these reasons:
+
+  | Not built | Why |
+  |---|---|
+  | N2, N4, P1 | need the planner to ask a research agent: there is no catalog action for that yet (G1) and no research agent. P1 repeats N4 |
+  | A1, A5, A8, A13 | the requester is the research agent (not built, G1), or an agent acting under another agent's identity (not built); A8 also needs a place for free text (G4) |
+  | A2, A4, A6, A7 | need an agent that misbehaves in a defined way or acts under another agent's identity (not built); A7 also needs an action served by the planner (G2); the broker side of A4 waits for G3 |
+  | A3 | needs only the existing agents; not built yet |
+
+  G1-G4 are decisions for the broker team; see `docs/scenario-coverage.md`.
+- **Direct mode has no security, on purpose.** It is the baseline: no payload
+  checks, no token checks, no access rules. `MODE=broker` returns 501 until a
+  broker exists. Tokens are unverifiable stubs and the per-message proof is a
+  placeholder.
+- **Concurrency is tested with the fake LLM only** (10 tasks at once). Ollama
+  answers one request at a time on this machine, so live tasks would queue
+  behind each other.
+- **Timings depend on the machine** (and fake runs vary with load too).
+  Model loading after an idle period takes about 35-90 s; live runs warm the
+  model up first, but a single message hop times out after 60 s.
+- **Everything is fictional and local.** The mail sink and the admin handler
+  only record what they receive. `results\`, `logs\` and `runtime\` are not
+  committed; the team's scenario sheet export in `scenarios\source\` is not
+  committed either.
 
 ## Troubleshooting
 
