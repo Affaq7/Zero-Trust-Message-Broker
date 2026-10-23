@@ -17,10 +17,12 @@ planner names and returns whatever the model answers. The catalog says which
 actions the research role may call; the broker enforces that, not this code.
 """
 
+import hashlib
 import json
 import os
 import threading
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, TypedDict
 
 from pydantic import BaseModel, Field, ValidationError
@@ -32,15 +34,16 @@ disable_telemetry()
 from langgraph.graph import END, StateGraph  # noqa: E402
 
 from agents.llm import LLMClient, LLMError, make_llm  # noqa: E402
+from agents.planner import DATA_TABLES, PROJECT_NAMES, _fields_text  # noqa: E402
 from contracts import Envelope  # noqa: E402
 from contracts.catalog import get_catalog  # noqa: E402
-from contracts.payloads import ResearchLookupPayload, ResponsePayload  # noqa: E402
+from contracts.payloads import ACTION_SCHEMAS, ResearchLookupPayload, ResponsePayload  # noqa: E402
 from wrapper.runtime import current_runtime  # noqa: E402
 from wrapper.send import SendError, send_message  # noqa: E402
 
 DEFAULT_MAX_STEPS = 4          # actions in total: source reads + extra actions
 MAX_EXTRA_ACTIONS = 1
-MAX_OBSERVATION_CHARS = 1500   # what one read or action shows the model
+MAX_OBSERVATION_CHARS = 1300   # what one read or action shows the model (trimmed from 1500 for the budget)
 MAX_ANSWER_CHARS = 500
 READ_MAX_BYTES = 4000
 READ_MAX_CHARS = 4000
@@ -102,15 +105,77 @@ def render_result(result: Any) -> str:
     return text[:MAX_OBSERVATION_CHARS]
 
 
+# The actions and fields the prompt shows are pinned here, not derived from the
+# catalog and the payload models, so a later contract addition does not change
+# the prompt unnoticed (same reason as the planner's pins). The prompt is meant
+# to be frozen like the planner's once it is stable: prompt_fingerprint() below
+# is the value to record, and widening either pin changes it.
+PROMPT_FIELDS: dict[str, tuple[str, ...]] = {
+    "db.query_aggregate": ("metric", "column", "group_by", "filters"),
+    "file.read_internal": ("max_bytes",),
+    "web.fetch_page": ("max_chars",),
+}
+PROMPT_ACTIONS = frozenset(PROMPT_FIELDS)
+
+# For every action research may offer the model: when to use it, and one example
+# (resource, payload). A test validates every example against its payload model.
+ACTION_GUIDE: dict[str, tuple[str, str, dict[str, Any]]] = {
+    "db.query_aggregate": (
+        "the question needs a total, count, average, minimum or maximum from company data "
+        "and no source above has it. column is required unless metric is count.",
+        "db:project_costs",
+        {"metric": "sum", "column": "amount", "filters": {"project": "Project X"}}),
+    "file.read_internal": (
+        "the question needs the text of an internal file that is not among the sources above.",
+        "file:/internal/example_report.txt",
+        {"max_bytes": 4000}),
+    "web.fetch_page": (
+        "the question needs the text of a web page that is not among the sources above.",
+        "https://news.example.com/example-page",
+        {"max_chars": 4000}),
+}
+
+
+def prompt_actions() -> dict[str, str]:
+    """action -> served_by, for every action the research role may call AND the
+    prompt offers (PROMPT_ACTIONS)."""
+    return {name: server for name, server in research_actions().items() if name in PROMPT_ACTIONS}
+
+
+def _action_help(actions: dict[str, str]) -> str:
+    blocks = []
+    for name in sorted(actions):
+        use_when, resource, payload = ACTION_GUIDE[name]
+        blocks.append(
+            f"- {name}: use this only when {use_when}\n"
+            f"  fields: {_fields_text(ACTION_SCHEMAS[name], PROMPT_FIELDS[name])}\n"
+            f'  example: "resource": "{resource}", "payload": {json.dumps(payload)}')
+    return "\n".join(blocks)
+
+
 SYSTEM = (
-    "You are the research agent of Zephyr Corp. You answer a question using only the "
-    "source texts you are shown. Reply with JSON only.\n"
-    'To answer: {"done": true, "answer": "<short answer that includes the figures or '
-    'statements you found>"}.\n'
-    "If the sources do not contain the answer, say so in the answer."
+    "You are the research agent of Zephyr Corp. You answer a question from the source texts "
+    "shown below. Reply with JSON only.\n"
+    'To answer: {"done": true, "answer": "<short answer>"}.\n'
+    'To read one more thing first: {"done": false, "action": "<action>", "resource": '
+    '"<resource>", "payload": {...}, "reason": "..."}.\n'
+    "Rules:\n"
+    "- The sources are already read for you. If they contain what the question asks, answer "
+    "now from them; do not read them again.\n"
+    "- Take an extra action only when the sources do not contain what the question needs. "
+    "You may take at most one.\n"
+    "- State figures, names and rules exactly as the source writes them (for example 12% or "
+    "example.org). Never add anything the sources do not say.\n"
+    "- If a source COULD NOT BE READ, say so; answer from the others.\n"
+    "- If the sources do not contain the answer, say that in the answer.\n"
+    "- Action names use a dot exactly as listed (file.read_internal).\n"
+    "- Keep the answer short: a few sentences.\n"
+    "\nActions you can use:\n"
 )
-CHOOSE_NEXT = 'Answer the question from the sources above: {"done": true, "answer": "..."}.'
-STEP_LIMIT = "You have used all your steps. Answer now from the sources above."
+# Closing line while one extra action is still allowed / at the step limit.
+CHOOSE_NEXT = ('If the sources above contain what the question asks, reply {"done": true, '
+               '"answer": "..."} now. Otherwise take the one action that can supply it.')
+STEP_LIMIT = "You have used all your steps. Finish now with the final answer."
 
 
 class ResearchAgent:
@@ -119,8 +184,17 @@ class ResearchAgent:
         self.sender = sender or self._send
         self.max_steps = max_steps or int(os.environ.get("RESEARCH_MAX_STEPS", DEFAULT_MAX_STEPS))
         self.actions = research_actions()
-        self.system = SYSTEM
+        self.system = SYSTEM + _action_help(prompt_actions()) + "\n\nCompany database tables:\n" + _data_help()
         self.graph = self._build()
+        # Opt-in debug: RESEARCH_DEBUG_PROMPTS=1 writes each decision's full prompt to
+        # <LOG_DIR>/prompts/research/<trace_id>/stepNN.txt and the model's reply to
+        # stepNN.reply.json (NN counts the decisions of one lookup). Off by default;
+        # the files hold the source texts the lookup read.
+        self.debug_dir: Path | None = None
+        if os.environ.get("RESEARCH_DEBUG_PROMPTS", "").strip() == "1":
+            log_dir = os.environ.get("LOG_DIR", "").strip()
+            self.debug_dir = (Path(log_dir) if log_dir else Path(__file__).resolve().parents[1] / "logs") \
+                / "prompts" / "research"
 
     # --- graph -----------------------------------------------------------------
 
@@ -187,12 +261,29 @@ class ResearchAgent:
         parts.append(CHOOSE_NEXT if self._may_act(state) else STEP_LIMIT)
         return "\n".join(parts)
 
+    def _debug_path(self, state: ResearchState, suffix: str) -> Path:
+        folder = self.debug_dir / state["trace_id"]
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder / f"step{len(state['extra']) + 1:02d}{suffix}"
+
+    def _write_debug_reply(self, state: ResearchState, reply: dict[str, Any]) -> None:
+        self._debug_path(state, ".reply.json").write_text(
+            json.dumps(reply, ensure_ascii=False, indent=2), encoding="utf-8")
+
     def _decide(self, state: ResearchState) -> dict:
+        prompt = self._prompt(state)
+        if self.debug_dir is not None:
+            self._debug_path(state, ".txt").write_text(
+                f"--- SYSTEM ---\n{self.system}\n\n--- USER ---\n{prompt}\n", encoding="utf-8")
         try:
             decision = self.llm.decide(purpose="research.decide", system=self.system,
-                                       prompt=self._prompt(state), schema=ResearchDecision)
+                                       prompt=prompt, schema=ResearchDecision)
         except LLMError as exc:
+            if self.debug_dir is not None:
+                self._write_debug_reply(state, {"error": f"{type(exc).__name__}: {exc}"[:500]})
             return {"error": f"research LLM failed: {exc}"[:500]}
+        if self.debug_dir is not None:
+            self._write_debug_reply(state, decision.model_dump())
         if decision.done:
             return {"answer": (decision.answer or "")[:MAX_ANSWER_CHARS], "decision": decision}
         if not self._may_act(state):
@@ -244,6 +335,49 @@ class ResearchAgent:
     def _send(**kwargs) -> Envelope:
         rt = current_runtime()
         return send_message(token=rt.token_for(kwargs["receiver"]), **kwargs)
+
+
+def _data_help() -> str:
+    return "\n".join(f"- db:{t} (columns: {', '.join(cols)})" for t, cols in DATA_TABLES.items()) \
+        + f"\nProject names, exactly: {', '.join(PROJECT_NAMES)}."
+
+
+# Fixed inputs for prompt_fingerprint(): never change them without re-recording the hash.
+SAMPLE_QUERY = "Which rule applies to payroll exports, and what was the Q3 market growth?"
+SAMPLE_SOURCES = ["file:/internal/hr_policy.txt", "https://news.example.com/q3-market"]
+SAMPLE_TEXTS = ["Payroll exports must not be emailed outside corp.local.",
+                "<html><body><p>Q3 market growth was 5.2% year on year.</p></body></html>"]
+
+
+def sample_states() -> dict[str, ResearchState]:
+    """The five fixed states whose prompts the fingerprint covers."""
+    def state(reads, extra=()):
+        return {"query": SAMPLE_QUERY, "trace_id": "t", "chain": ["user", "planner"],
+                "sources": list(SAMPLE_SOURCES), "reads": reads, "extra": list(extra),
+                "decision": None, "answer": None, "error": None}
+
+    both = [{"source": s, "ok": True, "text": t} for s, t in zip(SAMPLE_SOURCES, SAMPLE_TEXTS)]
+    one_failed = [{"source": SAMPLE_SOURCES[0], "ok": False, "text": "file not found: /internal/hr_policy.txt"},
+                  both[1]]
+    ok_step = {"action": "file.read_internal", "resource": "file:/internal/q3_report.txt",
+               "outcome": "OK. Q3 revenue was 1.2M."}
+    bad_step = {"action": "file.read_internal", "resource": "file:/internal/none.txt",
+                "outcome": "ERROR: file not found: /internal/none.txt"}
+    return {"first": state(both), "one_failed": state(one_failed), "after_ok": state(both, [ok_step]),
+            "after_error": state(both, [bad_step]), "at_limit": state(both * 2)}
+
+
+def prompt_fingerprint() -> str:
+    """SHA-256 of everything the research agent can show the model: the system
+    prompt and the prompts built for the fixed sample states (sample_states():
+    sources read, one source failed, after an OK extra step, after a failed
+    extra step, step limit reached). Any change to the rules, examples, closing
+    lines or the rendering of sources and steps changes it. When the prompt is
+    declared stable, record this value in docs/measurements.md and add a test
+    that compares them, as for the planner."""
+    agent = ResearchAgent(llm=None, sender=lambda **k: None, max_steps=DEFAULT_MAX_STEPS)
+    parts = [agent.system] + [agent._prompt(s) for s in sample_states().values()]
+    return hashlib.sha256("\n=====\n".join(parts).encode("utf-8")).hexdigest()
 
 
 _default: ResearchAgent | None = None

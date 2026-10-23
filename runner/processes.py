@@ -110,6 +110,7 @@ class Testbed:
                 "LLM_FAKE_SCRIPT": str(script) if c.llm_backend == "fake" else "",
                 "LLM_BASE_URL": c.llm_base_url,
                 "PLANNER_DEBUG_PROMPTS": "1" if c.debug_prompts else "",
+                "RESEARCH_DEBUG_PROMPTS": "1" if c.debug_prompts else "",
             })
 
     def start(self) -> "Testbed":
