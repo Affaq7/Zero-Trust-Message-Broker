@@ -371,7 +371,7 @@ Use `curl.exe`, not `curl`. In Windows PowerShell `curl` is an alias for
 | File | What is in it |
 |---|---|
 | `docs/open-questions.md` | every contract and design question, with its status (decided, provisional, open) and who must confirm it |
-| `docs/scenario-coverage.md` | message paths for all 19 scenarios, which ones apply in direct mode, entitled parties, the four gaps (G1-G4) and the contract changes proposed for the teammates |
+| `docs/scenario-coverage.md` | message paths for all 19 scenarios, which ones apply in direct mode, entitled parties, the four gaps (G1-G4) and the contract changes proposed for the teammates (mostly made since: see S10-S17 in `docs/open-questions.md`) |
 | `docs/broker-integration.md` | for the broker developer: where the broker sits, what `MODE=broker` does today, envelopes, headers, what the testbed expects back, and what is still open |
 | `docs/agents-and-roles.md` | which agents exist, their roles, what each may call and serve |
 | `docs/measurements.md` | timings, live N1/N3 results, the frozen planner prompt hash, warm-call measurements |
@@ -397,12 +397,14 @@ Use `curl.exe`, not `curl`. In Windows PowerShell `curl` is an alias for
 
   | Not built | Why |
   |---|---|
-  | N2, N4, P1 | need the planner to ask a research agent: there is no catalog action for that yet (G1) and no research agent. P1 repeats N4 |
-  | A1, A5, A8, A13 | the requester is the research agent (not built, G1), or an agent acting under another agent's identity (not built); A8 also needs a place for free text (G4) |
-  | A2, A4, A6, A7 | need an agent that misbehaves in a defined way or acts under another agent's identity (not built); A7 also needs an action served by the planner (G2); the broker side of A4 waits for G3 |
+  | N2, N4, P1 | need the planner to ask a research agent. The catalog action now exists (`research.lookup`) but there is no research agent, and the frozen planner prompt does not use the action. P1 repeats N4 |
+  | A1, A5, A8, A13 | the requester is the research agent (not built), or an agent acting under another agent's identity (not built); A8's target is still undecided (Q-S2) |
+  | A2, A4, A6, A7 | need an agent that misbehaves in a defined way or acts under another agent's identity (not built); A7 also needs the planner to handle `planner.request` (the action exists, the handler does not); the broker side of A4 needs the tool agent to deliver mail through `mail.deliver` and a mailer agent (neither is built) |
   | A3 | needs only the existing agents; not built yet |
 
-  G1-G4 are decisions for the broker team; see `docs/scenario-coverage.md`.
+  The broker team answered G1, G2 and G4 on 2026-10-24 (new actions and
+  optional fields, `docs/open-questions.md` S10-S17) and G3 for mail; the
+  rest of G3 and A8's target are still open. See `docs/scenario-coverage.md`.
 - **Direct mode has no security, on purpose.** It is the baseline: no payload
   checks, no token checks, no access rules. `MODE=broker` returns 501 until a
   broker exists. Tokens are unverifiable stubs and the per-message proof is a

@@ -134,7 +134,15 @@ the final answer the runner receives.
 Over-exposure for a run = any individual marker value reaching a party not
 in its column (checked in envelopes, the final answer and the mail sink).
 
-## 4. Proposed contract changes (not made; for the teammates)
+## 4. Proposed contract changes (for the teammates)
+
+> **Status, 2026-10-24.** Kissa and Amna agreed G1, G2 and G4, G3 for mail,
+> and cc/bcc, as additive changes with the same `schema_version`. They are
+> in `contracts/` now, with details and a few small differences from the
+> proposals below (for example `planner:request` and `mail:outbound` as
+> resources, `max_sources` required): `docs/open-questions.md` S10-S17. The
+> text below is the original proposal, kept as written. Still open: the rest
+> of G3 (outbound calls other than mail) and A8's target (Q-S2).
 
 - **G1, planner -> research delegation.** Add `research.lookup`: Permitted,
   callers `[planner]`, served_by `research`; resource `research:query`;

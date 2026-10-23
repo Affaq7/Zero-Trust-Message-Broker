@@ -21,8 +21,12 @@ Not envelopes, so not seen by a broker today:
 - the runner's `POST /task` to the entry agent (the stand-in for the human
   user; decision C1);
 - an agent's calls to the mock services (database, files, web, mail, admin
-  handler) over plain HTTP. **OPEN (G3):** does the broker also mediate
-  these outbound tool calls? A4 depends on it.
+  handler) over plain HTTP. For mail this is changing: the contract now has
+  `mail.deliver` (caller `tool`, served by `mailer`, section 8), but the
+  testbed does not use it yet (no mailer agent), so the tool agent still
+  reaches the mock mail sink over plain HTTP. **OPEN (G3):** do the other
+  outbound calls (files, web, admin, database) also become broker-visible
+  messages, or does the broker see only agent-to-agent messages?
 
 ## 2. What MODE=broker does in the testbed now
 
@@ -204,7 +208,77 @@ or overwrites any that agents set; receivers trust them only with a valid
 
 ## 7. Related open items
 
-G1 (planner -> research action), G2 (an action served by planner), G3
-(outbound tool calls), G4 (free text for justification), S8 (cc/bcc), Q2
-(the malicious agent's role), Q6/Q19-Q22 (token details), Q26 (broker URL).
+G3 for the outbound calls other than mail, A8's target (Q-S2: the database
+agent with `justification`, or the planner via `planner.request`), Q2 (the
+malicious agent's role), Q6/Q19-Q22 (token details), Q26 (broker URL), S16
+(whether the catalog should carry risk ratings). Answered since the first
+version of this document: G1, G2, G4 and S8 (S10-S14, section 8).
 See `docs/open-questions.md` and `docs/scenario-coverage.md`.
+
+## 8. Contract additions of 2026-10-24 (agreed by Kissa and Amna)
+
+Additive, same `schema_version` "0.2". Nothing existing changed; all of it
+is in `contracts/` and covered by tests. Details and open points are S10-S17
+in `docs/open-questions.md`.
+
+**New actions** (all Permitted; the catalog has no field for resources or
+risk ratings, so those are documented, not enforced):
+
+| Action | Caller | Served by | Resource | Payload |
+|---|---|---|---|---|
+| `research.lookup` | planner | research | `research:query` | `query` (1-500 chars), `sources` (optional, max 5), `max_sources` (1-3, required) |
+| `planner.request` | research | planner | `planner:request` | `request` (1-500), `suggested_action` (optional, 1-100) |
+| `mail.deliver` | tool only | mailer | `mail:outbound` | `to` (1-20), `cc`, `bcc` (0-20 each), `subject`, `body` |
+
+`planner:request` and `mail:outbound` were chosen by the testbed side; please
+confirm them. Risk ratings for `research.lookup` and `planner.request` (both
+R, T, D, E, P, A, S = L, L, M, L, L, M, M) are in S16.
+
+**New roles/agents:** `mailer` (role and agent). `research` was already a role.
+
+**Optional `justification`** (max 500 characters) on `db.query_rows`,
+`db.update_records`, `file.delete` and `tool.send_email_external` only. It is
+free text written by the requesting agent; it never changes who may call an
+action, and anything it says is for the broker or an approver to judge, not
+to trust. **OPEN (Kissa):** whether and how a decision uses it (for example
+shown to the HITL approver).
+
+**`cc` / `bcc`** are optional lists on both email actions and on
+`mail.deliver`, with the same limits as `to` (up to 20 each, so up to 60
+recipients in one message). Every recipient list is normalised by
+`contracts.payloads.normalize_address` (strip, then lowercase) before the
+shape is checked, so validating a payload yields exactly the addresses a
+mailer would use. Use the validated model, not the raw dictionary, when
+comparing recipients. **Aliases and groups are unsupported**: an address is
+taken literally and never expanded. Plus-tags are kept and duplicates are not
+removed (not discussed).
+
+An example `mail.deliver` request as the contract builds it (the tool agent
+does not send this yet):
+
+```json
+{
+  "schema_version": "0.2", "msg_id": "<uuid>", "trace_id": "<uuid>", "parent_msg_id": null,
+  "msg_type": "request", "sender": "tool", "receiver": "mailer",
+  "action": "mail.deliver", "resource": "mail:outbound",
+  "payload": {"to": ["alice.morgan@corp.local"], "cc": ["boss@corp.local"], "bcc": [],
+              "subject": "Project X cost", "body": "The total is 184,250."},
+  "delegation_chain": ["user", "planner", "tool"], "timestamp": "<utc>",
+  "decision": null, "reason_code": null, "redacted_fields": null, "broker_signature": null
+}
+```
+
+**What the testbed does with this today:**
+
+- The mock mail sink accepts `cc`/`bcc`, records all three lists and counts an
+  outside address in any of them as an external recipient (ground truth for
+  A4-style scenarios). It validates with the schema of the action behind its
+  resource, so an external email may carry a `justification` and an internal
+  one may not.
+- The planner prompt is frozen for the baseline. The planner does not offer
+  or send `research.lookup`, and `justification`, `cc` and `bcc` are not shown
+  to the model (S17). There is no research agent, no mailer agent and no
+  planner handler for `planner.request` yet, so no scenario uses these
+  additions so far.
+- Direct mode still checks none of it; payload validation against these
+  schemas is the broker's job.
