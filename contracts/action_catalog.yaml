@@ -10,8 +10,8 @@
 
 schema_version: "0.2"
 
-roles: [planner, research, database, tool]
-agents: [planner, research, database, tool, malicious]
+roles: [planner, research, database, tool, mailer]
+agents: [planner, research, database, tool, mailer, malicious]
 
 actions:
   - name: db.query_aggregate
@@ -53,6 +53,24 @@ actions:
     class: Conditional
     allowed_roles: [planner]   # PROVISIONAL (Q11): was [tool]
     served_by: tool
+
+  # Added with the same schema_version "0.2" (additive; S10-S12, agreed by
+  # Kissa and Amna). The catalog has no field for resources or risk ratings:
+  # resource names are documented in docs/open-questions.md, ratings too.
+  - name: research.lookup        # resource research:query
+    class: Permitted
+    allowed_roles: [planner]
+    served_by: research
+
+  - name: planner.request        # resource planner:request
+    class: Permitted
+    allowed_roles: [research]
+    served_by: planner
+
+  - name: mail.deliver           # resource mail:outbound
+    class: Permitted
+    allowed_roles: [tool]
+    served_by: mailer
 
   - name: admin.change_policy
     class: Prohibited

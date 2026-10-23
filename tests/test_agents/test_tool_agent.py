@@ -103,6 +103,30 @@ def test_llm_draft_cannot_change_recipients(make_agent, truth):
     assert truth(trace_id="trace-tool", kind="mail.attempt")[0]["details"]["to"] == ["colleague@corp.local"]
 
 
+def test_cc_and_bcc_pass_through_unchanged_and_are_recorded(make_agent, truth):
+    agent = make_agent({"tool.compose_email": [DRAFT]})
+    payload = {**EMAIL, "cc": ["Boss@corp.local"], "bcc": ["audit@corp.local"]}
+    out = agent.handle(req("tool.send_email_internal", "email:internal", payload))
+    assert out.status == "ok"
+    sent = truth(trace_id="trace-tool", kind="mail.attempt")[0]["details"]
+    assert (sent["to"], sent["cc"], sent["bcc"]) == (
+        ["colleague@corp.local"], ["boss@corp.local"], ["audit@corp.local"])      # normalised, not changed by the LLM
+    assert sent["external_recipients"] == []
+
+
+def test_justification_is_accepted_on_the_external_email(make_agent, truth):
+    agent = make_agent({"tool.compose_email": [DRAFT]})
+    payload = {**EMAIL, "to": ["partner@example.org"], "justification": "Requested by the finance lead."}
+    assert agent.handle(req("tool.send_email_external", "email:external", payload)).status == "ok"
+    assert truth(trace_id="trace-tool", kind="mail.attempt")[0]["details"]["external_recipients"] == ["partner@example.org"]
+
+
+def test_justification_on_the_internal_email_is_rejected_with_a_field_name(make_agent):
+    agent = make_agent({"tool.compose_email": [DRAFT]})
+    out = agent.handle(req("tool.send_email_internal", "email:internal", {**EMAIL, "justification": "please"}))
+    assert out.status == "error" and "justification:" in out.error and "please" not in out.error
+
+
 def test_braces_in_email_text_are_kept(make_agent, truth):
     agent = make_agent({"tool.compose_email": [{"subject": "Totals {Q3}", "body": "Value: {total}"}]})
     payload = {**EMAIL, "subject": "Totals {Q3}", "body": "Value: {total}"}

@@ -7,6 +7,7 @@ import pytest
 from agents.base import TaskContext
 from agents.planner import PlannerAgent, planner_actions
 from contracts import make_response, new_request
+from contracts.catalog import get_catalog
 from contracts.payloads import ResponsePayload
 from wrapper.send import UnknownReceiverError
 
@@ -114,6 +115,44 @@ def test_prompt_states_the_rules_that_failed_live(fake_llm):
     assert "It is never a list" in system and "group_by is a list" in system
     assert "Project names, exactly: Project X, Project Y, Project Z." in system
     assert system.count("example:") == len(planner_actions())
+
+
+def test_pinned_prompt_actions_are_still_allowed_by_the_catalog():
+    # If the catalog stops letting the planner call one of the pinned actions, say so loudly.
+    from agents.planner import FROZEN_PROMPT_ACTIONS
+    catalog = get_catalog()
+    assert all(catalog.is_allowed("planner", a) for a in FROZEN_PROMPT_ACTIONS)
+    assert set(planner_actions()) == set(FROZEN_PROMPT_ACTIONS)
+
+
+def test_contract_additions_do_not_reach_the_frozen_prompt(fake_llm):
+    # research.lookup is allowed for the planner in the catalog (S10) but the frozen
+    # prompt neither offers nor can send it; planner.request/mail.deliver are not planner calls.
+    catalog = get_catalog()
+    assert catalog.is_allowed("planner", "research.lookup")
+    assert "research.lookup" not in planner_actions()
+    assert not catalog.is_allowed("planner", "mail.deliver") and not catalog.is_allowed("planner", "planner.request")
+    system = PlannerAgent(fake_llm("planner", {}), RecordingSender()).system
+    for text in ("research.lookup", "planner.request", "mail.deliver", "justification", "cc (", "bcc (",
+                 "max_sources", "mailer"):
+        assert text not in system, text
+
+
+def test_pinned_fields_exist_in_the_payload_models_and_are_shown_in_order():
+    from agents.planner import FROZEN_PROMPT_FIELDS, _fields_text
+    from contracts.payloads import ACTION_SCHEMAS
+    for action, names in FROZEN_PROMPT_FIELDS.items():
+        assert set(names) <= set(ACTION_SCHEMAS[action].model_fields), action
+        assert [part.split(" (")[0] for part in _fields_text(ACTION_SCHEMAS[action], names).split("; ")] == list(names)
+
+
+def test_planner_cannot_send_an_action_the_frozen_prompt_does_not_offer(fake_llm):
+    sender = RecordingSender()
+    planner = PlannerAgent(fake_llm("planner", {"planner.decide": [
+        step("research.lookup", "research:query", {"query": "policy", "max_sources": 1}),
+        finish("Could not look it up.")]}), sender)
+    assert planner.run_task(CTX).status == "ok"
+    assert sender.calls == []                                   # nothing was sent
 
 
 def test_prompt_has_the_stopping_rules(fake_llm):

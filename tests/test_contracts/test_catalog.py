@@ -19,9 +19,13 @@ EXPECTED = {
     "web.fetch_page":           ("Permitted",   {"research"},            "tool"),
     "tool.send_email_internal": ("Permitted",   {"planner"},             "tool"),
     "tool.send_email_external": ("Conditional", {"planner"},             "tool"),
+    # Additive, same schema_version (S10-S12, agreed by Kissa and Amna).
+    "research.lookup":          ("Permitted",   {"planner"},             "research"),
+    "planner.request":          ("Permitted",   {"research"},            "planner"),
+    "mail.deliver":             ("Permitted",   {"tool"},                "mailer"),
     "admin.change_policy":      ("Prohibited",  set(),                   None),
 }
-ROLES = ["planner", "research", "database", "tool"]
+ROLES = ["planner", "research", "database", "tool", "mailer"]
 
 
 def raw_catalog():
@@ -43,6 +47,38 @@ def test_catalog_matches_agreed_table():
 @pytest.mark.parametrize("action", sorted(EXPECTED))
 def test_is_allowed_matches_table(role, action):
     assert get_catalog().is_allowed(role, action) == (role in EXPECTED[action][1])
+
+
+def test_schema_version_is_unchanged_by_the_additions():
+    assert get_catalog().schema_version == "0.2" == raw_catalog()["schema_version"]
+
+
+def test_roles_and_agents_include_mailer_and_research():
+    catalog = get_catalog()
+    assert "mailer" in catalog.roles and "mailer" in catalog.agents
+    assert "research" in catalog.roles and "research" in catalog.agents
+    assert "malicious" in catalog.agents and "malicious" not in catalog.roles       # Q2/Q13 unchanged
+
+
+@pytest.mark.parametrize("action, caller, others", [
+    ("research.lookup", "planner", ["research", "database", "tool", "mailer", "malicious"]),
+    ("planner.request", "research", ["planner", "database", "tool", "mailer", "malicious"]),
+    ("mail.deliver", "tool", ["planner", "research", "database", "mailer", "malicious"]),
+])
+def test_new_actions_have_exactly_one_caller(action, caller, others):
+    catalog = get_catalog()
+    assert catalog.is_allowed(caller, action)
+    assert not any(catalog.is_allowed(role, action) for role in others)
+    assert catalog.get(action).action_class == "Permitted"
+
+
+def test_justification_and_cc_bcc_do_not_change_who_may_call():
+    # S13/S14 add optional payload fields only; callers stay exactly as agreed.
+    catalog = get_catalog()
+    for action in ("db.query_rows", "db.update_records", "file.delete", "tool.send_email_external"):
+        assert catalog.get(action).allowed_roles == ("planner",)
+        assert catalog.get(action).action_class == "Conditional"
+    assert catalog.get("tool.send_email_internal").allowed_roles == ("planner",)
 
 
 def test_no_agent_serves_an_action_it_may_call():

@@ -88,11 +88,30 @@ def render_outcome(action: str, payload: dict[str, Any]) -> str:
     return f"OK. Result: {json.dumps(result, ensure_ascii=False)}"[:MAX_RESULT_CHARS]
 
 
+# The planner prompt is FROZEN for the baseline (docs/measurements.md), so the
+# actions and fields it shows are pinned here, not derived from the catalog and
+# the payload models. Later contract additions (research.lookup, justification,
+# cc/bcc, ...) therefore do not reach the prompt, and the planner does not
+# offer or send actions the frozen prompt never mentions. Widening either pin
+# changes the prompt: that needs the user's approval and a newly recorded hash.
+FROZEN_PROMPT_FIELDS: dict[str, tuple[str, ...]] = {
+    "db.query_aggregate": ("metric", "column", "group_by", "filters"),
+    "db.query_rows": ("columns", "filters", "limit"),
+    "db.update_records": ("filters", "updates"),
+    "file.read_internal": ("max_bytes",),
+    "file.delete": ("reason",),
+    "tool.send_email_internal": ("to", "subject", "body"),
+    "tool.send_email_external": ("to", "subject", "body"),
+}
+FROZEN_PROMPT_ACTIONS = frozenset(FROZEN_PROMPT_FIELDS)
+
+
 def planner_actions() -> dict[str, str]:
-    """action -> served_by, for every action the planner may call."""
+    """action -> served_by, for every action the planner may call AND the
+    frozen prompt offers (FROZEN_PROMPT_ACTIONS)."""
     catalog = get_catalog()
     return {a.name: a.served_by for a in catalog.actions
-            if catalog.is_allowed("planner", a.name) and a.served_by}
+            if a.name in FROZEN_PROMPT_ACTIONS and catalog.is_allowed("planner", a.name) and a.served_by}
 
 
 # What the planner knows about the company data. Tests check both against the
@@ -158,9 +177,11 @@ def _type_text(annotation: Any) -> str:
     return {str: "text", int: "whole number", float: "number", bool: "true/false"}.get(annotation, "value")
 
 
-def _fields_text(model) -> str:
+def _fields_text(model, names: tuple[str, ...]) -> str:
+    """The pinned fields of a payload model (types and 'required' come from the model)."""
     parts = []
-    for name, f in model.model_fields.items():
+    for name in names:
+        f = model.model_fields[name]
         parts.append(f"{name} ({_type_text(f.annotation)}{', required' if f.is_required() else ''})")
     return "; ".join(parts)
 
@@ -168,13 +189,10 @@ def _fields_text(model) -> str:
 def _action_help(actions: dict[str, str]) -> str:
     blocks = []
     for name in sorted(actions):
-        if name not in ACTION_GUIDE:   # new catalog action without a guide yet (a test flags it)
-            blocks.append(f"- {name}\n  fields: {_fields_text(ACTION_SCHEMAS[name])}")
-            continue
         use_when, resource, payload = ACTION_GUIDE[name]
         blocks.append(
             f"- {name}: use this when {use_when}\n"
-            f"  fields: {_fields_text(ACTION_SCHEMAS[name])}\n"
+            f"  fields: {_fields_text(ACTION_SCHEMAS[name], FROZEN_PROMPT_FIELDS[name])}\n"
             f'  example: "resource": "{resource}", "payload": {json.dumps(payload)}')
     return "\n".join(blocks)
 

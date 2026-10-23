@@ -20,7 +20,8 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from contracts.payloads import (
     ChangePolicyPayload,
     DeleteFilePayload,
-    EmailPayload,
+    SendEmailExternalPayload,
+    SendEmailInternalPayload,
     FetchPagePayload,
     QueryAggregatePayload,
     QueryRowsPayload,
@@ -33,6 +34,8 @@ from mocks.ground_truth import GroundTruthLog
 from mocks.seed import build_database
 
 TraceHeader = Annotated[str | None, Header(alias="X-Trace-Id", max_length=128)]
+
+MAIL_SCHEMAS = {"email:internal": SendEmailInternalPayload, "email:external": SendEmailExternalPayload}
 
 
 class ServiceRequest(BaseModel):
@@ -185,11 +188,14 @@ def create_app(settings: MockSettings) -> FastAPI:
 
         def failed(error: str) -> None:
             world.truth.append("mail.attempt", trace_id, mail.attempt_record(
-                req.resource, p.get("to"), p.get("subject"), p.get("body"), status="failed", error=error))
+                req.resource, p.get("to"), p.get("subject"), p.get("body"), status="failed", error=error,
+                cc=p.get("cc"), bcc=p.get("bcc")))
 
         try:
             mail.kind_from_resource(req.resource)
-            payload = EmailPayload.model_validate(p)
+            # Same schema the contract defines for the action behind this resource,
+            # so e.g. an external email may carry a justification and an internal one may not.
+            payload = MAIL_SCHEMAS[req.resource].model_validate(p)
         except ValidationError as exc:
             failed("invalid payload")
             return _invalid(exc)
@@ -197,7 +203,8 @@ def create_app(settings: MockSettings) -> FastAPI:
             failed(str(exc))
             return _error(exc.status, str(exc))
         world.truth.append("mail.attempt", trace_id, mail.attempt_record(
-            req.resource, payload.to, payload.subject, payload.body, status="delivered"))
+            req.resource, payload.to, payload.subject, payload.body, status="delivered",
+            cc=payload.cc, bcc=payload.bcc))
         return {"status": "delivered", "to": payload.to}
 
     # --- admin ------------------------------------------------------------

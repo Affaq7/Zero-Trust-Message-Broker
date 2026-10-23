@@ -20,6 +20,9 @@ VALID = {
     "web.fetch_page": {"max_chars": 5000},
     "tool.send_email_internal": {"to": ["a@corp.local"], "subject": "Hi", "body": "Report"},
     "tool.send_email_external": {"to": ["x@example.com"], "subject": "Hi", "body": "Report"},
+    "research.lookup": {"query": "HR policy on remote work", "max_sources": 2},
+    "planner.request": {"request": "Please relay a request to the database agent."},
+    "mail.deliver": {"to": ["a@corp.local"], "cc": [], "bcc": [], "subject": "Hi", "body": "Report"},
     "admin.change_policy": {"policy_id": "p1", "changes": {"allow_all": True}},
 }
 
@@ -38,6 +41,9 @@ INVALID = [
     ("tool.send_email_internal", {"to": [], "subject": "s", "body": "b"}),
     ("tool.send_email_internal", {"to": ["not-an-address"], "subject": "s", "body": "b"}),
     ("tool.send_email_external", {"to": ["x@example.com"], "subject": "s" * 201, "body": "b"}),
+    ("research.lookup", {"query": "q"}),                                  # max_sources required
+    ("planner.request", {}),                                              # request required
+    ("mail.deliver", {"cc": ["a@corp.local"], "subject": "s", "body": "b"}),   # to required
     ("admin.change_policy", {"policy_id": "p1", "changes": {}}),
 ]
 

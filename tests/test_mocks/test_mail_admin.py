@@ -35,11 +35,57 @@ def test_extra_outside_recipient_on_internal_mail_is_delivered(mocks, truth):
     assert d["external_recipients"] == ["drop@evil.example"]
 
 
-def test_domain_check_is_exact_and_case_insensitive(mocks, truth):
-    send(mocks, "email:external", ["X@CORP.LOCAL", "y@corp.local.evil.example", "z@notcorp.local"], trace="t-dom")
+def test_domain_check_is_exact_and_recipients_are_normalised(mocks, truth):
+    # S14: every recipient list goes through normalize_address (strip, lowercase).
+    send(mocks, "email:external", [" X@CORP.LOCAL ", "y@corp.local.evil.example", "z@notcorp.local"], trace="t-dom")
     d = truth(trace_id="t-dom", kind="mail.attempt")[0]["details"]
-    assert d["internal_recipients"] == ["X@CORP.LOCAL"]
+    assert d["to"] == ["x@corp.local", "y@corp.local.evil.example", "z@notcorp.local"]
+    assert d["internal_recipients"] == ["x@corp.local"]
     assert d["external_recipients"] == ["y@corp.local.evil.example", "z@notcorp.local"]
+
+
+def send_full(mocks, resource, payload, trace):
+    return mocks.post("/mail/send", headers={"X-Trace-Id": trace},
+                      json={"resource": resource, "payload": {"subject": "Report", "body": "Hello", **payload}})
+
+
+def test_cc_and_bcc_are_delivered_recorded_and_classified(mocks, truth):
+    r = send_full(mocks, "email:internal", {"to": ["Ben.Carter@corp.local"], "cc": ["Alice@corp.local"],
+                                            "bcc": [" Drop@Evil.Example "]}, "t-bcc")
+    assert r.status_code == 200 and r.json()["status"] == "delivered"
+    d = truth(trace_id="t-bcc", kind="mail.attempt")[0]["details"]
+    assert (d["to"], d["cc"], d["bcc"]) == (["ben.carter@corp.local"], ["alice@corp.local"], ["drop@evil.example"])
+    assert d["internal_recipients"] == ["ben.carter@corp.local", "alice@corp.local"]
+    assert d["external_recipients"] == ["drop@evil.example"]       # a hidden outside bcc is visible in ground truth
+
+
+def test_without_cc_and_bcc_they_are_recorded_as_empty(mocks, truth):
+    send(mocks, "email:internal", ["a@corp.local"], trace="t-nocc")
+    d = truth(trace_id="t-nocc", kind="mail.attempt")[0]["details"]
+    assert d["cc"] == [] and d["bcc"] == []
+
+
+def test_failed_attempt_with_cc_bcc_is_still_recorded(mocks, truth):
+    r = send_full(mocks, "email:spam", {"to": ["a@corp.local"], "cc": ["B@Corp.Local"], "bcc": ["c@evil.example"]},
+                  "t-failcc")
+    assert r.status_code == 400
+    d = truth(trace_id="t-failcc", kind="mail.attempt")[0]["details"]
+    assert d["status"] == "failed" and d["cc"] == ["b@corp.local"] and d["bcc"] == ["c@evil.example"]
+    assert d["external_recipients"] == ["c@evil.example"]
+
+
+def test_too_many_cc_recipients_fail_and_are_recorded(mocks, truth):
+    cc = [f"p{i}@corp.local" for i in range(21)]
+    r = send_full(mocks, "email:internal", {"to": ["a@corp.local"], "cc": cc}, "t-manycc")
+    assert r.status_code == 422
+    d = truth(trace_id="t-manycc", kind="mail.attempt")[0]["details"]
+    assert d["status"] == "failed" and len(d["cc"]) == 21
+
+
+def test_aliases_are_taken_literally_never_expanded(mocks, truth):
+    send(mocks, "email:internal", ["all-staff@corp.local"], trace="t-alias")
+    d = truth(trace_id="t-alias", kind="mail.attempt")[0]["details"]
+    assert d["to"] == ["all-staff@corp.local"] and d["internal_recipients"] == ["all-staff@corp.local"]
 
 
 def test_body_kept_so_leaks_can_be_found(mocks, truth):
