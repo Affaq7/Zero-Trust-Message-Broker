@@ -221,8 +221,24 @@ each wrapper where the other agents are with `AGENT_URLS` (comma-separated
 `name=url` pairs), for example:
 
 ```powershell
-$env:AGENT_URLS = "dummy=http://127.0.0.1:8001,tool=http://127.0.0.1:8004"
+$env:AGENT_URLS = "dummy=http://127.0.0.1:8001,tool=http://127.0.0.1:8004,mailer=http://127.0.0.1:8005"
 ```
+
+The ports are only examples for starting agents by hand: the runner gives every
+process a free port and builds `AGENT_URLS` itself. An agent that sends mail
+needs the mailer in its `AGENT_URLS`: the tool agent delivers email by sending
+a `mail.deliver` message to the **mailer** agent, which is the only thing that
+calls the mail sink. To start the mailer by hand (mock services running on
+8090, see below):
+
+```powershell
+$env:MODE = "direct"; $env:AGENT_NAME = "mailer"; $env:MOCKS_URL = "http://127.0.0.1:8090"
+& ".\.venv\Scripts\python.exe" -m uvicorn wrapper.main:app --host 127.0.0.1 --port 8005
+```
+
+The mailer is deterministic (no LLM) and accepts `mail.deliver` only from the
+tool agent. A scenario whose tool sends email must list `mailer` among its
+`agents`; N3 does.
 
 The runner starts work with `POST /task` (`{"task": "...", "trace_id": "..."}`),
 standing in for the human user; it accepts no other fields. Each wrapper mints
@@ -240,7 +256,11 @@ One process, no LLM: a seeded SQLite database, a sandboxed file store,
 fixture web pages, a mail sink and an admin handler. Everything they do is
 appended to `logs\mocks.jsonl` (ground truth for the runner). Working copies
 live in `runtime\mocks\` and are rebuilt from the seed at startup and on
-`POST /reset`. All data is fictional.
+`POST /reset`. All data is fictional. In a scenario run the **mailer agent is
+the only thing that calls the mail sink** (`/mail/send`, resource
+`mail:outbound`); the manual call below is only for checking the sink by hand.
+The sink records every attempt (`delivered` or `failed`) with the normalised
+`to`, `cc` and `bcc`.
 
 ```powershell
 & ".\.venv\Scripts\python.exe" -m uvicorn mocks.main:app --host 127.0.0.1 --port 8090
@@ -271,7 +291,7 @@ Encoded so far (7 of the 19 scenarios, in `scenarios\`):
 | Scenario | What | In direct mode |
 |---|---|---|
 | **N1** | planner asks the database for the total cost of Project X | runs |
-| **N3** | planner emails an internal summary to one colleague | runs |
+| **N3** | planner emails an internal summary to one colleague (planner, database, tool and mailer processes; 3 messages) | runs |
 | **A9, A10, A11, A12, A14** | attacks that need the broker or a token check | **not applicable**: recorded as `not_applicable` with the reason, never run, left out of every rate |
 
 The other 12 are not built yet; see [Known limits](#known-limits-of-the-testbed).
@@ -399,12 +419,17 @@ Use `curl.exe`, not `curl`. In Windows PowerShell `curl` is an alias for
   |---|---|
   | N2, N4, P1 | need the planner to ask a research agent. The catalog action now exists (`research.lookup`) but there is no research agent, and the frozen planner prompt does not use the action. P1 repeats N4 |
   | A1, A5, A8, A13 | the requester is the research agent (not built), or an agent acting under another agent's identity (not built); A8's target is still undecided (Q-S2) |
-  | A2, A4, A6, A7 | need an agent that misbehaves in a defined way or acts under another agent's identity (not built); A7 also needs the planner to handle `planner.request` (the action exists, the handler does not); the broker side of A4 needs the tool agent to deliver mail through `mail.deliver` and a mailer agent (neither is built) |
+  | A2, A4, A6, A7 | need an agent that misbehaves in a defined way or acts under another agent's identity (not built); A7 also needs the planner to handle `planner.request` (the action exists, the handler does not); the broker side of A4 now has its message (the tool agent sends `mail.deliver` to the mailer agent, both built), what is missing is the misbehaving tool agent |
   | A3 | needs only the existing agents; not built yet |
 
   The broker team answered G1, G2 and G4 on 2026-10-24 (new actions and
-  optional fields, `docs/open-questions.md` S10-S17) and G3 for mail; the
-  rest of G3 and A8's target are still open. See `docs/scenario-coverage.md`.
+  optional fields, `docs/open-questions.md` S10-S17) and G3 for mail (the
+  mailer agent is built, S18); the rest of G3 and A8's target are still open.
+  See `docs/scenario-coverage.md`.
+- **The mailer refuses `mail.deliver` from any sender but the tool agent, also
+  in direct mode** (it reads the envelope's `sender`, which nothing verifies
+  there). A scenario in which another agent sends `mail.deliver` straight to
+  the mailer therefore gets "refused" in the baseline, not "mail sent".
 - **Direct mode has no security, on purpose.** It is the baseline: no payload
   checks, no token checks, no access rules. `MODE=broker` returns 501 until a
   broker exists. Tokens are unverifiable stubs and the per-message proof is a

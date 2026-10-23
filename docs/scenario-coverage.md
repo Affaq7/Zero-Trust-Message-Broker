@@ -18,6 +18,13 @@ Legend for "catalog": **ok** = action exists and the caller may call it;
 **out-of-band** = not an envelope (runner `/task`, or an agent calling a mock
 service over plain HTTP, which the broker never sees).
 
+> **Update 2026-10-24 (S12, S18).** Mail is no longer out-of-band: the tool
+> agent sends a `mail.deliver` message to the mailer agent, and only the
+> mailer calls the mock mail sink. In the rows below that say
+> "tool -> mail sink (plain HTTP)" (N3, A3, A4), read "tool -> mailer
+> (`mail.deliver`, a message a broker can see) -> sink". The other plain-HTTP
+> calls (files, web, admin handler, database) are unchanged.
+
 ## 1. Message paths per scenario
 
 | Scenario | # | Sender -> receiver | Action | Catalog | Notes |

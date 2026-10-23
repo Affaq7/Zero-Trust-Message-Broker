@@ -136,6 +136,10 @@ not_applicable (nothing runs; excluded from rates). Encode others only when
 the user says so (N2, N4, P1 and the other attacks wait on G1-G4, the
 research agent and the malicious agent).
 Stage files by name (not `git add -A`) while the CSV exists.
+Mail path: planner -> tool -> mailer (mail.deliver) -> mock mail sink. The
+mailer agent (deterministic, no LLM) is the only caller of the sink and accepts
+mail.deliver only from the tool; a scenario whose tool sends mail must list
+`mailer` in its agents (N3 does).
 The planner prompt is FROZEN for the baseline: `agents.planner.prompt_fingerprint()`
 must equal the "Frozen planner prompt SHA-256" in docs/measurements.md (a test
 checks it). Change the prompt only with the user's approval, then record the

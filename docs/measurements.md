@@ -86,6 +86,13 @@ MODE=direct.
 N1 now finishes right after the single total query, and N3 does one query,
 one email and finishes.
 
+*Topology note (2026-10-24):* these runs predate the mailer agent. Since then
+the tool agent delivers email through the mailer (`mail.deliver`), so N3 runs
+**3 messages** (planner->database, planner->tool, tool->mailer) instead of 2.
+The mailer makes no LLM call and the planner prompt is unchanged, so the LLM
+calls per run (5) are expected to stay the same; the live N3 figures above
+(2 messages, 81-89 s) have not been re-measured with the mailer.
+
 ## Warm-up in live runs
 
 Since the runner warm-up was added, `python -m runner --llm ollama ...` makes

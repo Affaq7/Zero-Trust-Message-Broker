@@ -20,13 +20,14 @@ Not envelopes, so not seen by a broker today:
 
 - the runner's `POST /task` to the entry agent (the stand-in for the human
   user; decision C1);
-- an agent's calls to the mock services (database, files, web, mail, admin
-  handler) over plain HTTP. For mail this is changing: the contract now has
-  `mail.deliver` (caller `tool`, served by `mailer`, section 8), but the
-  testbed does not use it yet (no mailer agent), so the tool agent still
-  reaches the mock mail sink over plain HTTP. **OPEN (G3):** do the other
-  outbound calls (files, web, admin, database) also become broker-visible
-  messages, or does the broker see only agent-to-agent messages?
+- an agent's calls to the mock services (database, files, web, admin
+  handler) over plain HTTP. **Mail is different**: since the mailer agent
+  exists, the tool agent sends a `mail.deliver` message to the mailer
+  (caller `tool`, served by `mailer`, section 8), and only the mailer talks to
+  the mock mail sink. So the final recipient lists (`to`, `cc`, `bcc`) are in
+  an envelope a broker can see. **OPEN (G3):** do the other outbound calls
+  (files, web, admin, database) also become broker-visible messages, or does
+  the broker see only agent-to-agent messages?
 
 ## 2. What MODE=broker does in the testbed now
 
@@ -253,8 +254,9 @@ comparing recipients. **Aliases and groups are unsupported**: an address is
 taken literally and never expanded. Plus-tags are kept and duplicates are not
 removed (not discussed).
 
-An example `mail.deliver` request as the contract builds it (the tool agent
-does not send this yet):
+An example `mail.deliver` request, in the form the tool agent now sends it to
+the mailer (it normalises the recipient lists and always states `cc` and
+`bcc`; here `cc` is filled in to show the shape):
 
 ```json
 {
@@ -270,15 +272,30 @@ does not send this yet):
 
 **What the testbed does with this today:**
 
-- The mock mail sink accepts `cc`/`bcc`, records all three lists and counts an
-  outside address in any of them as an external recipient (ground truth for
-  A4-style scenarios). It validates with the schema of the action behind its
-  resource, so an external email may carry a `justification` and an internal
-  one may not.
+- **The mail path (S12, S18).** planner -> tool (`tool.send_email_internal` or
+  `tool.send_email_external`) -> mailer (`mail.deliver`, resource
+  `mail:outbound`, sender `tool`, delegation chain `user, planner, tool`, same
+  `trace_id`) -> mock mail sink. The tool drafts subject and body with the
+  LLM, normalises the recipients, and sends only `to`, `cc`, `bcc`, `subject`
+  and `body`; request-only fields such as `justification` are not forwarded.
+  N3 runs this way: 3 messages instead of 2.
+- **The mailer** is deterministic (no LLM) and the only caller of the sink. It
+  accepts `mail.deliver` only from the senders the catalog allows (the tool
+  agent) and answers any other sender with an error and no delivery. This is
+  the mailer's own rule, read from the envelope's `sender` field: direct mode
+  does not verify tokens, so it cannot tell an impostor that sends as `tool`
+  from the real tool agent. The wrapper itself still applies no access rules
+  in direct mode. **OPEN (Kissa):** the broker's own identity and delegation
+  checks on this hop (is `tool` really the sender, does the chain end with it).
+- **The sink** records every attempt (`delivered` or `failed`) with the
+  normalised `to`, `cc` and `bcc`, and counts an outside address in any of the
+  three as an external recipient (ground truth for A4-style scenarios). It
+  never knows the intended recipients; the scenario file lists them. It
+  accepts `mail:outbound` (the `mail.deliver` schema) and, for manual checks,
+  `email:internal` / `email:external`.
 - The planner prompt is frozen for the baseline. The planner does not offer
   or send `research.lookup`, and `justification`, `cc` and `bcc` are not shown
-  to the model (S17). There is no research agent, no mailer agent and no
-  planner handler for `planner.request` yet, so no scenario uses these
-  additions so far.
+  to the model (S17). There is no research agent and no planner handler for
+  `planner.request` yet, so no scenario uses those two actions so far.
 - Direct mode still checks none of it; payload validation against these
   schemas is the broker's job.

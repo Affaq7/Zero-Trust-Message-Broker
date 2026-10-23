@@ -10,8 +10,8 @@ The catalog is enforced by the broker only; direct mode ignores it.
 | planner | planner | `db.query_aggregate`, `db.query_rows`, `db.update_records`, `file.read_internal`, `file.delete`, `tool.send_email_internal`, `tool.send_email_external`, `research.lookup` | `planner.request` | yes: message handler (still replies with an error, since it has no handler for `planner.request` yet) and task handler (`POST /task`, the entry point). The frozen prompt offers only the first seven actions: it neither offers nor sends `research.lookup` (S17) |
 | research | research | `db.query_aggregate`, `file.read_internal`, `web.fetch_page`, `planner.request` | `research.lookup` | no: the contract side is in place (S10, S11), the agent is not built |
 | database | database | none | `db.query_aggregate`, `db.query_rows`, `db.update_records` | yes: message handler |
-| tool | tool | `mail.deliver` | `file.read_internal`, `file.delete`, `web.fetch_page`, `tool.send_email_internal`, `tool.send_email_external`; also handles `admin.change_policy` when a scenario sends it there (M4), although the catalog serves it nobody | yes: message handler. It does not call `mail.deliver` yet: it still sends mail to the mock sink over plain HTTP |
-| mailer | mailer | none | `mail.deliver` | no: new role and agent in the catalog (S12, S15); no implementation yet. The mock mail sink is what a mailer would front |
+| tool | tool | `mail.deliver` | `file.read_internal`, `file.delete`, `web.fetch_page`, `tool.send_email_internal`, `tool.send_email_external`; also handles `admin.change_policy` when a scenario sends it there (M4), although the catalog serves it nobody | yes: message handler. Files, web pages and policy changes go to the mock services; **email is drafted with the LLM and sent to the mailer as a `mail.deliver` message** (it never calls the mail sink itself) |
+| mailer | mailer | none | `mail.deliver` | yes: message handler, deterministic, no LLM, no `/task`. Accepts `mail.deliver` only from the tool agent (the catalog's callers; it reads the envelope's `sender` field, which direct mode does not verify), passes the message to the mock mail sink and returns the sink's answer. **It is the only thing that calls the sink.** A scenario whose tool sends mail must list `mailer` among its agents |
 | malicious | none of its own: `AGENT_ROLE` must be set (Q2, credentials teammate) | whatever its token's role allows; as an impostor (`AGENT_NAME=<victim>`, `AGENT_IMPL=malicious`) it has the victim's name and role | none | no: step 12 paused |
 
 Every action in the catalog, with its caller and server:
@@ -40,6 +40,16 @@ Optional payload fields added without changing who may call anything:
 (lists, same limits as `to`) on both email actions and `mail.deliver`, with
 every recipient list normalised by `normalize_address` (strip, lowercase)
 and aliases unsupported (S14).
+
+How a mail flows (direct mode): planner -> tool (`tool.send_email_internal` /
+`tool.send_email_external`) -> mailer (`mail.deliver`, resource `mail:outbound`,
+sender `tool`, delegation chain `user, planner, tool`) -> mock mail sink (plain
+HTTP, recorded as a `mail.attempt`: `delivered` or `failed`, with the
+normalised `to`, `cc` and `bcc`). The tool normalises the recipient lists with
+`normalize_address` and always states `cc` and `bcc` (empty if none were
+requested); fields that belong to the request only, such as `justification`,
+are not forwarded. The sink never knows the intended recipients: the scenario
+file does.
 
 Not in the catalog:
 
