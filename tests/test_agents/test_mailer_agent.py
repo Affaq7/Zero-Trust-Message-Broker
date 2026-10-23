@@ -9,7 +9,7 @@ import pytest
 import agents.mailer as mailer_module
 from agents.mailer import MailerAgent
 from agents.mocks_client import MocksClient
-from contracts import Envelope, new_request
+from contracts import new_request
 from contracts.catalog import get_catalog
 from wrapper import registry
 from wrapper.send import send_message
@@ -35,7 +35,7 @@ def attempts(truth):
     return truth(kind="mail.attempt")
 
 
-# --- accepts mail.deliver from the tool agent only -------------------------------------
+# --- serves mail.deliver; no access rule in direct mode ---------------------------------------
 
 def test_delivers_for_the_tool_agent(mailer, truth):
     out = mailer.handle(deliver())
@@ -48,27 +48,20 @@ def test_delivers_for_the_tool_agent(mailer, truth):
     assert d["internal_recipients"] == ["alice.morgan@corp.local"] and d["external_recipients"] == []
 
 
-def test_allowed_senders_come_from_the_catalog_and_are_just_the_tool():
-    assert MailerAgent.allowed_senders() == get_catalog().get("mail.deliver").allowed_roles == ("tool",)
-
-
-@pytest.mark.parametrize("sender", ["planner", "research", "database", "malicious", "dummy",
-                                    "Tool", "tool2", "tool ", "user", "broker"])
-def test_refuses_mail_deliver_from_any_sender_other_than_tool(mailer, truth, sender):
-    chain = ["user"] if sender != "user" else []
-    request = deliver(sender, chain=chain) if sender != "user" else Envelope.model_validate({
-        **deliver().model_dump(mode="json"), "sender": "user", "delegation_chain": ["user"]})
-    out = mailer.handle(request)
-    assert out.status == "error"
-    assert out.error.startswith("mail.deliver is accepted only from tool, not from ")
-    assert repr(sender) in out.error
-    assert attempts(truth) == []                                              # nothing reached the sink, not even a failed record
-
-
-def test_refusal_happens_before_the_payload_is_looked_at(mailer, truth):
-    out = mailer.handle(deliver("planner", {"to": "garbage", "nonsense": 1}))
-    assert out.error.startswith("mail.deliver is accepted only from tool")    # not a payload error
-    assert attempts(truth) == []
+def test_accepts_mail_deliver_from_a_non_tool_sender_in_direct_mode(mail_path, truth):
+    # The baseline has no access rule: the catalog says only the tool may call mail.deliver,
+    # and the broker will enforce that later. Direct mode delivers what arrives, whoever sent it.
+    assert get_catalog().get("mail.deliver").allowed_roles == ("tool",)
+    environ = {**mail_path.environ, "AGENT_NAME": "planner"}                      # a sender the catalog does not allow
+    payload = {**GOOD, "bcc": ["drop@evil.example"]}
+    reply = send_message(token="stub", environ=environ, client=mail_path.client, receiver="mailer",
+                         action="mail.deliver", resource="mail:outbound", payload=payload,
+                         chain_so_far=["user"], trace_id="trace-non-tool")
+    assert (reply.sender, reply.receiver) == ("mailer", "planner")
+    assert reply.payload["status"] == "ok" and reply.payload["result"]["status"] == "delivered"
+    [rec] = attempts(truth)
+    assert rec["trace_id"] == "trace-non-tool"
+    assert rec["details"]["status"] == "delivered" and rec["details"]["external_recipients"] == ["drop@evil.example"]
 
 
 @pytest.mark.parametrize("action", ["db.query_rows", "tool.send_email_internal", "tool.send_email_external",
@@ -180,20 +173,11 @@ def test_mailer_wrapper_has_the_mailer_role_and_no_task_entry(mail_path):
     assert r.status_code == 404
 
 
-def test_through_the_wrapper_tool_is_served_and_others_are_refused(mail_path, truth):
+def test_through_the_wrapper_the_tool_is_served(mail_path, truth):
     ok = mail_path.send(receiver="mailer", action="mail.deliver", resource="mail:outbound", payload=GOOD,
                         chain_so_far=["user", "planner"], trace_id="trace-wrap")
     assert ok.payload["status"] == "ok" and (ok.sender, ok.receiver) == ("mailer", "tool")
     assert len(attempts(truth)) == 1
-
-    # The same call as another agent (AGENT_NAME=planner): the wrapper accepts the envelope,
-    # the mailer agent refuses it, and the sink hears nothing.
-    environ = {**mail_path.environ, "AGENT_NAME": "planner"}
-    refused = send_message(token="stub", environ=environ, client=mail_path.client, receiver="mailer",
-                           action="mail.deliver", resource="mail:outbound", payload=GOOD,
-                           chain_so_far=["user"], trace_id="trace-wrap-2")
-    assert refused.payload["status"] == "error" and "accepted only from tool" in refused.payload["error"]
-    assert len(attempts(truth)) == 1                                           # still just the first one
 
 
 def test_mailer_in_the_scenario_agent_list_is_a_known_agent():

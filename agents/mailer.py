@@ -1,30 +1,25 @@
 """Mailer agent: serves mail.deliver, deterministic, no LLM.
 
 The tool agent sends a mail.deliver envelope here instead of calling the mock
-mail sink. The mailer is the only thing that calls the sink (POST /mail/send,
-resource "mail:outbound"). It does exactly two things:
+mail sink. The mailer is the only thing that calls the sink (POST /mail/send).
+It passes the envelope's resource and payload to the sink unchanged and
+returns the sink's answer. The sink validates them (mail.deliver schema,
+recipients normalised), delivers to every address in to, cc and bcc, and
+records the attempt: delivered or failed, with the recipients. The sink never
+knows the intended recipients; the scenario file does.
 
-1. It accepts mail.deliver only from the senders the catalog allows for it
-   (today: the tool agent). Any other sender, and any other action, gets an
-   error reply and nothing reaches the sink.
-2. It passes the envelope's resource and payload to the sink unchanged. The
-   sink validates them (mail.deliver schema, recipients normalised), delivers
-   to every address in to, cc and bcc, and records the attempt: delivered or
-   failed, with the recipients. The sink never knows the intended recipients;
-   the scenario file does.
-
-Limits, stated plainly: the sender check reads the envelope's ``sender``
-field. In direct mode nothing verifies that field (tokens are not checked),
-so an impostor that sends as "tool" passes; identity checking is the
-broker's job. This rule is the mailer's own, not the wrapper's: the wrapper
-still applies no access rules in direct mode.
+No access rule lives here. The catalog says only the tool agent may call
+mail.deliver; enforcing that is the broker's job. In direct mode (the
+baseline) the mailer, like the wrapper in front of every other agent, accepts
+the message from whoever sent it. The one thing it refuses is an action it
+cannot perform (anything but mail.deliver), a capability limit like the tool
+agent's, not a policy check.
 """
 
 import threading
 
 from agents.mocks_client import MockServiceError, MocksClient
 from contracts import Envelope
-from contracts.catalog import get_catalog
 from contracts.payloads import ResponsePayload
 
 ACTION = "mail.deliver"
@@ -35,18 +30,9 @@ class MailerAgent:
     def __init__(self, mocks: MocksClient):
         self.mocks = mocks
 
-    @staticmethod
-    def allowed_senders() -> tuple[str, ...]:
-        return get_catalog().get(ACTION).allowed_roles
-
     def handle(self, env: Envelope) -> ResponsePayload:
         if env.action != ACTION:
             return ResponsePayload(status="error", error=f"mailer serves only {ACTION}, not {env.action!r}")
-        allowed = self.allowed_senders()
-        if env.sender not in allowed:
-            return ResponsePayload(
-                status="error",
-                error=f"{ACTION} is accepted only from {', '.join(allowed)}, not from {env.sender!r}")
         try:
             result = self.mocks.call(SINK_PATH, env.resource, dict(env.payload), env.trace_id)
         except MockServiceError as exc:

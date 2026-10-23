@@ -232,8 +232,10 @@ risk ratings, so those are documented, not enforced):
 | `mail.deliver` | tool only | mailer | `mail:outbound` | `to` (1-20), `cc`, `bcc` (0-20 each), `subject`, `body` |
 
 `planner:request` and `mail:outbound` were chosen by the testbed side; please
-confirm them. Risk ratings for `research.lookup` and `planner.request` (both
-R, T, D, E, P, A, S = L, L, M, L, L, M, M) are in S16.
+confirm them. Risk ratings (the catalog has no field for them, so they are in
+S16): `research.lookup` and `planner.request`, both Reversibility L, Real-time
+Impact L, Data Sensitivity M, External Communication L, Privilege L, Autonomy
+M, Impact Scope M. `mail.deliver` has no ratings yet (waiting for Amna).
 
 **New roles/agents:** `mailer` (role and agent). `research` was already a role.
 
@@ -280,12 +282,13 @@ the mailer (it normalises the recipient lists and always states `cc` and
   and `body`; request-only fields such as `justification` are not forwarded.
   N3 runs this way: 3 messages instead of 2.
 - **The mailer** is deterministic (no LLM) and the only caller of the sink. It
-  accepts `mail.deliver` only from the senders the catalog allows (the tool
-  agent) and answers any other sender with an error and no delivery. This is
-  the mailer's own rule, read from the envelope's `sender` field: direct mode
-  does not verify tokens, so it cannot tell an impostor that sends as `tool`
-  from the real tool agent. The wrapper itself still applies no access rules
-  in direct mode. **OPEN (Kissa):** the broker's own identity and delegation
+  applies **no access rule** in direct mode: it accepts `mail.deliver` from
+  any sender, passes it to the sink and returns the answer, exactly as the
+  wrapper does for every other agent. "Only the tool agent may call
+  `mail.deliver`" is in the catalog and is **for the broker to enforce**
+  (a message from any other sender reaches the sink in the baseline). The
+  mailer refuses only an action it cannot perform (anything but
+  `mail.deliver`). **OPEN (Kissa):** the broker's identity and delegation
   checks on this hop (is `tool` really the sender, does the chain end with it).
 - **The sink** records every attempt (`delivered` or `failed`) with the
   normalised `to`, `cc` and `bcc`, and counts an outside address in any of the

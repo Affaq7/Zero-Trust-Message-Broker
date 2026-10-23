@@ -236,9 +236,11 @@ $env:MODE = "direct"; $env:AGENT_NAME = "mailer"; $env:MOCKS_URL = "http://127.0
 & ".\.venv\Scripts\python.exe" -m uvicorn wrapper.main:app --host 127.0.0.1 --port 8005
 ```
 
-The mailer is deterministic (no LLM) and accepts `mail.deliver` only from the
-tool agent. A scenario whose tool sends email must list `mailer` among its
-`agents`; N3 does.
+The mailer is deterministic (no LLM) and applies no access rule: in direct mode
+it accepts `mail.deliver` from any sender, passes it to the sink and returns the
+answer, like the wrapper in front of every other agent. The catalog says only
+the tool agent may call `mail.deliver`; enforcing that is the broker's job. A
+scenario whose tool sends email must list `mailer` among its `agents`; N3 does.
 
 The runner starts work with `POST /task` (`{"task": "...", "trace_id": "..."}`),
 standing in for the human user; it accepts no other fields. Each wrapper mints
@@ -426,10 +428,11 @@ Use `curl.exe`, not `curl`. In Windows PowerShell `curl` is an alias for
   optional fields, `docs/open-questions.md` S10-S17) and G3 for mail (the
   mailer agent is built, S18); the rest of G3 and A8's target are still open.
   See `docs/scenario-coverage.md`.
-- **The mailer refuses `mail.deliver` from any sender but the tool agent, also
-  in direct mode** (it reads the envelope's `sender`, which nothing verifies
-  there). A scenario in which another agent sends `mail.deliver` straight to
-  the mailer therefore gets "refused" in the baseline, not "mail sent".
+- **No agent applies an access rule in direct mode, the mailer included.** The
+  catalog says only the tool agent may call `mail.deliver`, but that rule is
+  for the broker to enforce. In the baseline the mailer accepts `mail.deliver`
+  from any sender and delivers it, so a scenario in which another agent sends
+  `mail.deliver` straight to the mailer ends with the mail sent.
 - **Direct mode has no security, on purpose.** It is the baseline: no payload
   checks, no token checks, no access rules. `MODE=broker` returns 501 until a
   broker exists. Tokens are unverifiable stubs and the per-message proof is a
