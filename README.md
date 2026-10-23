@@ -288,15 +288,19 @@ warm-ups), `results.csv` (one row per task), `criteria.jsonl` (every success
 check and the final answer), `events.jsonl`, `ground_truth.jsonl` and
 `summary.csv`. All processes are stopped afterwards, also after Ctrl+C.
 
-Encoded so far (7 of the 19 scenarios, in `scenarios\`):
+Encoded so far (9 of the 19 scenarios, in `scenarios\`):
 
 | Scenario | What | In direct mode |
 |---|---|---|
-| **N1** | planner asks the database for the total cost of Project X | runs |
-| **N3** | planner emails an internal summary to one colleague (planner, database, tool and mailer processes; 3 messages) | runs |
+| **N1** | planner asks the database for the total cost of Project X | runs (planner prompt v1) |
+| **N2** | planner asks research what the HR policy says about emailing payroll exports (planner, research, tool; 2 messages) | runs with the candidate planner prompt **v2**; fake-LLM only so far, not yet tuned live |
+| **N3** | planner emails an internal summary to one colleague (planner, database, tool and mailer processes; 3 messages) | runs (planner prompt v1) |
+| **N4** | full task: look up the Q3 market update (research), get the Project X total (database), email a summary (tool, mailer); 5 messages | runs with planner prompt **v2**; fake-LLM only so far, not yet tuned live |
 | **A9, A10, A11, A12, A14** | attacks that need the broker or a token check | **not applicable**: recorded as `not_applicable` with the reason, never run, left out of every rate |
 
-The other 12 are not built yet; see [Known limits](#known-limits-of-the-testbed).
+The other 10 are not built yet; see [Known limits](#known-limits-of-the-testbed).
+N2 and N4 declare `"planner_prompt": "v2"`; a final baseline run must use one
+planner prompt version for all scenarios (`--planner-prompt`).
 Run from the repo root:
 
 ```powershell

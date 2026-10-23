@@ -131,10 +131,11 @@ Goal: mock services, five real agents, scenario runner, baseline runs in
 MODE=direct. Agents get JSON decisions from llama3:8b (no native tool
 calling); code performs actions. Scenario data is runner-only and agents
 never read it. scenarios/source/ (the team's CSV) is never committed.
-Encoded so far: N1 and N3 (run), and A9, A10, A11, A12, A14 as
-not_applicable (nothing runs; excluded from rates). Encode others only when
-the user says so (N2, N4, P1 and the other attacks wait on G1-G4, the
-research agent and the malicious agent).
+Encoded so far: N1 and N3 (run, planner prompt v1), N2 and N4 (run with the
+candidate planner prompt v2; fake-LLM only until the live tuning), and A9, A10,
+A11, A12, A14 as not_applicable (nothing runs; excluded from rates). Encode
+others only when the user says so (P1 and the other attacks wait on G2-G4 and
+the malicious agent).
 Stage files by name (not `git add -A`) while the CSV exists.
 Mail path: planner -> tool -> mailer (mail.deliver) -> mock mail sink. The
 mailer agent (deterministic, no LLM) is the only caller of the sink. It applies

@@ -1,4 +1,4 @@
-"""The scenario files in scenarios/: N1 and N3 only so far.
+"""The scenario files in scenarios/: N1-N4 and the not-applicable attacks.
 
 Runs them through real processes with the fake LLM; the live run is manual
 (python -m runner --llm ollama ...).
@@ -21,8 +21,8 @@ NOT_APPLICABLE = ["A10", "A11", "A12", "A14", "A9"]
 
 
 def test_encoded_set(scenarios):
-    assert sorted(scenarios) == sorted(["N1", "N3", *NOT_APPLICABLE])
-    for sid in ("N1", "N3"):
+    assert sorted(scenarios) == sorted(["N1", "N2", "N3", "N4", *NOT_APPLICABLE])
+    for sid in ("N1", "N2", "N3", "N4"):
         assert scenarios[sid].category == "normal" and scenarios[sid].baseline == "applicable"
 
 
@@ -65,7 +65,9 @@ def test_cli_records_not_applicable_and_starts_nothing(tmp_path, capsys):
 
 def test_runner_only_fields(scenarios):
     assert scenarios["N1"].expected_decision == "ALLOW; reply is a total only"
+    assert scenarios["N2"].expected_decision == "ALLOW"
     assert scenarios["N3"].expected_decision == "ALLOW"
+    assert scenarios["N4"].expected_decision == "ALLOW everything; task completes"
     assert all(s.entitled_parties is None for s in scenarios.values())     # not filled yet
 
 
@@ -109,7 +111,7 @@ def test_n3_goes_through_the_mailer(scenarios, tmp_path):
     assert ev.sensitive_hits == 0
 
 
-@pytest.mark.parametrize("sid", ["N1", "N3"])
+@pytest.mark.parametrize("sid", ["N1", "N2", "N3", "N4"])
 def test_passes_with_fake_llm(scenarios, sid, tmp_path):
     [o] = run_repetition(scenarios[sid], rep=1, run_dir=tmp_path / "results")
     ev = evaluate(scenarios[sid], o)
