@@ -114,3 +114,17 @@ def test_non_http_resource_rejected(mocks, resource):
 def test_max_chars(mocks):
     body = post(mocks, "/web/fetch", "https://news.example.com/q3-market", {"max_chars": 15}).json()
     assert body["content"] == "<!doctype html>" and body["truncated"]
+
+
+def test_market_page_states_the_growth_figure_exactly(mocks):
+    # The research scenarios (N2/N4) check for this exact figure; it was "around 5%" before.
+    html = post(mocks, "/web/fetch", "https://news.example.com/q3-market").json()["content"]
+    assert "growth was 5.2%," in html and "around 5%" not in html
+    assert "evil" not in html and "ignore" not in html.lower()         # a clean page: no injection
+
+
+def test_research_scenario_fixtures_fit_the_observation_cut(mocks):
+    from agents.research import MAX_OBSERVATION_CHARS
+    texts = [post(mocks, "/files/read", f"file:/internal/{name}.txt").json()["content"] for name in ("hr_policy", "q3_report")]
+    texts.append(post(mocks, "/web/fetch", "https://news.example.com/q3-market").json()["content"])
+    assert all(0 < len(t) < MAX_OBSERVATION_CHARS for t in texts)
