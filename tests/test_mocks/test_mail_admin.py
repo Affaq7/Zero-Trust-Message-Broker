@@ -82,6 +82,27 @@ def test_too_many_cc_recipients_fail_and_are_recorded(mocks, truth):
     assert d["status"] == "failed" and len(d["cc"]) == 21
 
 
+def test_mail_outbound_is_the_mailers_resource_and_uses_the_mail_deliver_schema(mocks, truth):
+    r = send_full(mocks, "mail:outbound", {"to": [" Alice@Corp.Local "], "cc": ["Boss@corp.local"],
+                                           "bcc": ["drop@evil.example"]}, "t-outbound")
+    assert r.status_code == 200 and r.json()["status"] == "delivered"
+    d = truth(trace_id="t-outbound", kind="mail.attempt")[0]["details"]
+    assert d["resource"] == "mail:outbound" and d["status"] == "delivered"
+    assert (d["to"], d["cc"], d["bcc"]) == (["alice@corp.local"], ["boss@corp.local"], ["drop@evil.example"])
+    assert d["external_recipients"] == ["drop@evil.example"]
+
+
+@pytest.mark.parametrize("resource, extra", [
+    ("mail:outbound", {"justification": "please"}),         # not a mail.deliver field
+    ("email:internal", {"justification": "please"}),        # nor a tool.send_email_internal field
+    ("mail:outbound", {"scenario_label": "A4"}),
+])
+def test_sink_rejects_fields_the_contract_does_not_allow(mocks, truth, resource, extra):
+    r = send_full(mocks, resource, {"to": ["a@corp.local"], **extra}, "t-extra")
+    assert r.status_code == 422
+    assert truth(trace_id="t-extra", kind="mail.attempt")[0]["details"]["status"] == "failed"
+
+
 def test_aliases_are_taken_literally_never_expanded(mocks, truth):
     send(mocks, "email:internal", ["all-staff@corp.local"], trace="t-alias")
     d = truth(trace_id="t-alias", kind="mail.attempt")[0]["details"]

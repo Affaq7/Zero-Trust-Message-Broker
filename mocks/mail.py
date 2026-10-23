@@ -1,5 +1,9 @@
 """Mock mail sink: ground truth for every delivery attempt.
 
+Only the mailer agent calls /mail/send in a scenario run (resource
+"mail:outbound", payload of mail.deliver); the older email:internal /
+email:external resources stay for manual checks.
+
 Every request to /mail/send is one attempt, recorded as kind "mail.attempt"
 with an explicit status: "delivered" (sent to every address in ``to``, ``cc``
 and ``bcc``, whatever the email:internal / email:external label says, as a
@@ -26,9 +30,12 @@ class MailError(ValueError):
     status = 400
 
 
+RESOURCES = ("email:internal", "email:external", "mail:outbound")
+
+
 def kind_from_resource(resource: str) -> str:
-    if resource not in ("email:internal", "email:external"):
-        raise MailError(f"resource must be email:internal or email:external, got {resource!r}")
+    if resource not in RESOURCES:
+        raise MailError(f"resource must be one of {', '.join(RESOURCES)}, got {resource!r}")
     return resource.split(":", 1)[1]
 
 

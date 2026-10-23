@@ -74,6 +74,41 @@ def test_n1_expected_total_matches_the_seed(scenarios):
     assert number.value == project_total("Project X")
 
 
+def test_n3_starts_the_mailer_process_and_n1_does_not(scenarios):
+    assert [a.name for a in scenarios["N3"].agents] == ["planner", "database", "tool", "mailer"]
+    assert "mailer" not in [a.name for a in scenarios["N1"].agents]
+
+
+def test_n3_keeps_its_fake_llm_script_and_checks_cc_and_bcc_are_empty(scenarios):
+    n3 = scenarios["N3"]
+    assert sorted(n3.fake_llm) == ["database", "planner", "tool"]            # the mailer needs no LLM script
+    decisions = n3.fake_llm["planner"]["planner.decide"]
+    assert [d.get("action") or "done" for d in decisions] == [
+        "db.query_aggregate", "tool.send_email_internal", "done"]             # same three planner steps as before
+    assert decisions[1]["payload"]["to"] == ["alice.morgan@corp.local"] and "cc" not in decisions[1]["payload"]
+    assert len(n3.fake_llm["database"]["database.summarise"]) == 1 and len(n3.fake_llm["tool"]["tool.compose_email"]) == 1
+    delivered = [c for c in n3.success_criteria
+                 if c.type == "ground_truth_count" and c.details.get("to") == ["alice.morgan@corp.local"]]
+    assert len(delivered) == 1 and delivered[0].details["cc"] == [] and delivered[0].details["bcc"] == []
+
+
+def test_n3_goes_through_the_mailer(scenarios, tmp_path):
+    [o] = run_repetition(scenarios["N3"], rep=1, run_dir=tmp_path / "results")
+    ev = evaluate(scenarios["N3"], o)
+    assert o.status == "completed" and ev.task_completed, ev.criteria
+    # Three messages: planner -> database, planner -> tool, tool -> mailer.
+    assert sorted(e["logged_by"] for e in o.envelopes if e["direction"] == "in") == ["database", "mailer", "tool"]
+    mail_in = next(e["envelope"] for e in o.envelopes if e["logged_by"] == "mailer" and e["direction"] == "in")
+    assert (mail_in["sender"], mail_in["action"], mail_in["resource"]) == ("tool", "mail.deliver", "mail:outbound")
+    assert mail_in["delegation_chain"] == ["user", "planner", "tool"]
+    [attempt] = [g for g in o.ground_truth if g["kind"] == "mail.attempt"]
+    d = attempt["details"]
+    assert (d["status"], d["resource"]) == ("delivered", "mail:outbound")
+    assert (d["to"], d["cc"], d["bcc"]) == (["alice.morgan@corp.local"], [], [])
+    assert d["external_recipients"] == []
+    assert ev.sensitive_hits == 0
+
+
 @pytest.mark.parametrize("sid", ["N1", "N3"])
 def test_passes_with_fake_llm(scenarios, sid, tmp_path):
     [o] = run_repetition(scenarios[sid], rep=1, run_dir=tmp_path / "results")

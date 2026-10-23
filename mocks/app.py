@@ -23,6 +23,7 @@ from contracts.payloads import (
     SendEmailExternalPayload,
     SendEmailInternalPayload,
     FetchPagePayload,
+    MailDeliverPayload,
     QueryAggregatePayload,
     QueryRowsPayload,
     ReadInternalFilePayload,
@@ -35,7 +36,8 @@ from mocks.seed import build_database
 
 TraceHeader = Annotated[str | None, Header(alias="X-Trace-Id", max_length=128)]
 
-MAIL_SCHEMAS = {"email:internal": SendEmailInternalPayload, "email:external": SendEmailExternalPayload}
+MAIL_SCHEMAS = {"email:internal": SendEmailInternalPayload, "email:external": SendEmailExternalPayload,
+                "mail:outbound": MailDeliverPayload}
 
 
 class ServiceRequest(BaseModel):

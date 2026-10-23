@@ -1,13 +1,19 @@
 import json
+from types import SimpleNamespace
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+import agents.mailer as mailer_module
 from agents.llm import FakeLLM, LLMSettings
+from agents.mailer import MailerAgent
 from agents.mocks_client import MocksClient
 from mocks.app import create_app as create_mocks_app
 from mocks.config import MockSettings
+from wrapper.app import create_app as create_wrapper_app
+from wrapper.config import Settings
+from wrapper.send import send_message
 
 
 @pytest.fixture
@@ -25,6 +31,45 @@ def mocks_client(mocks):
                           headers=dict(request.headers))
         return httpx.Response(r.status_code, headers=r.headers, content=r.content)
     return MocksClient("http://mocks.test", client=httpx.Client(transport=httpx.MockTransport(route)))
+
+
+@pytest.fixture
+def recording_mocks(mocks):
+    """A separate MocksClient for the agent under test that records every path it calls."""
+    paths = []
+
+    def route(request):
+        paths.append(request.url.path)
+        r = mocks.request(request.method, request.url.path, content=request.read(),
+                          headers=dict(request.headers))
+        return httpx.Response(r.status_code, headers=r.headers, content=r.content)
+    client = MocksClient("http://mocks.test", client=httpx.Client(transport=httpx.MockTransport(route)))
+    return SimpleNamespace(client=client, paths=paths)
+
+
+@pytest.fixture
+def mail_path(tmp_path, mocks_client, monkeypatch):
+    """The mailer behind a real wrapper, in-process, as the tool agent reaches it.
+
+    .send(**kwargs) is send_message() as the tool agent (AGENT_NAME=tool) would call it;
+    .requests are the HTTP requests that reached the mailer; .app is the mailer wrapper.
+    The mailer talks to the mock sink through ``mocks_client``.
+    """
+    monkeypatch.setattr(mailer_module, "_default", MailerAgent(mocks_client))
+    app = TestClient(create_wrapper_app(Settings(mode="direct", agent_name="mailer", log_dir=tmp_path)))
+    requests = []
+
+    def route(request):
+        requests.append(request)
+        r = app.request(request.method, request.url.path, content=request.read(),
+                        headers=dict(request.headers))
+        return httpx.Response(r.status_code, headers=r.headers, content=r.content)
+    http = httpx.Client(transport=httpx.MockTransport(route))
+    environ = {"MODE": "direct", "AGENT_NAME": "tool", "AGENT_URLS": "mailer=http://mailer.test"}
+
+    def send(**kwargs):
+        return send_message(token="stub-token-for-tests", environ=environ, client=http, **kwargs)
+    return SimpleNamespace(send=send, requests=requests, app=app, client=http, environ=environ)
 
 
 @pytest.fixture

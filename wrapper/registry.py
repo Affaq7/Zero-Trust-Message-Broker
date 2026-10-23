@@ -1,6 +1,6 @@
 """Maps the agent implementation name (AGENT_IMPL, default AGENT_NAME) to its code."""
 
-from agents import database, dummy, planner, tool
+from agents import database, dummy, mailer, planner, tool
 from agents.base import AgentFn, TaskFn
 from wrapper.config import ConfigError
 
@@ -10,6 +10,7 @@ AGENTS: dict[str, AgentFn] = {
     "tool": tool.handle,
     "database": database.handle,
     "planner": planner.handle,
+    "mailer": mailer.handle,
 }
 
 # Task handlers (POST /task), only for agents that can start work for the user.
