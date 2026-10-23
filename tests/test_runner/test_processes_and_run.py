@@ -62,8 +62,9 @@ def test_controlled_variables_are_not_inherited(monkeypatch):
     monkeypatch.setenv("MODE", "broker")
     monkeypatch.setenv("AGENT_IMPL", "something")
     monkeypatch.setenv("LLM_SEED", "999")
+    monkeypatch.setenv("RESEARCH_MAX_STEPS", "9")
     env = clean_base_env()
-    assert not any(k in env for k in ("MODE", "AGENT_IMPL", "LLM_SEED"))
+    assert not any(k in env for k in ("MODE", "AGENT_IMPL", "LLM_SEED", "RESEARCH_MAX_STEPS"))
     assert env["CREWAI_DISABLE_TELEMETRY"] == "true"
 
 
