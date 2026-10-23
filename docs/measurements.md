@@ -86,12 +86,17 @@ MODE=direct.
 N1 now finishes right after the single total query, and N3 does one query,
 one email and finishes.
 
-*Topology note (2026-10-24):* these runs predate the mailer agent. Since then
-the tool agent delivers email through the mailer (`mail.deliver`), so N3 runs
-**3 messages** (planner->database, planner->tool, tool->mailer) instead of 2.
-The mailer makes no LLM call and the planner prompt is unchanged, so the LLM
-calls per run (5) are expected to stay the same; the live N3 figures above
-(2 messages, 81-89 s) have not been re-measured with the mailer.
+*Topology change (2026-10-24):* these runs predate the mailer agent. Since
+then the tool agent delivers email through the mailer (`mail.deliver`), so N3
+now runs **3 messages** (planner to database, planner to tool, tool to
+mailer) instead of 2, with the **same 5 LLM calls** (the mailer makes none;
+the planner prompt is unchanged). A fake-LLM run confirms 3 messages and 5
+LLM calls. The live N3 figures above (2 messages, 81-89 s) therefore describe
+the old topology. **Re-measure live:** N3, 3 repetitions
+(`python -m runner --llm ollama --scenario N3 --reps 3 --max-minutes 45`),
+and record the new messages, LLM calls and latency here. The extra hop adds
+two small HTTP calls and no model time, so the latency is expected to be
+close, but that is not measured.
 
 ## Warm-up in live runs
 
