@@ -31,6 +31,7 @@ COLUMNS = [
     "run_id", "scenario_id", "category", "baseline", "rep", "concurrency", "slot", "trace_id",
     "started_at", "ended_at", "e2e_latency_ms", "status", "task_status", "task_completed",
     "attack_succeeded", "over_exposure", "sensitive_hits", "messages", "llm_calls", "llm_time_ms",
+    "research_llm_time_ms", "research_lookup_ms_max",
     "criteria_passed", "criteria_total", "criteria_failed", "expected_decision", "broker_decision", "detected",
     "not_applicable_reason", "error",
 ]
@@ -51,13 +52,40 @@ def _git_commit() -> str:
         return "unknown"
 
 
-def _prompt_fingerprint() -> str:
+def _prompt_fingerprint(version: str | None = None) -> str:
     from agents.planner import prompt_fingerprint   # imports LangGraph; only when a run starts
-    return prompt_fingerprint()
+    return prompt_fingerprint(version)
+
+
+def effective_planner_versions(scenarios: list[Scenario], override: str | None = None) -> dict[str, str]:
+    """scenario id -> the planner prompt version it runs with (the override, else the
+    scenario's own planner_prompt, else the planner's default), applicable scenarios only."""
+    from agents.planner import prompt_spec          # imports LangGraph; only when a run starts
+    return {s.id: prompt_spec(override or s.planner_prompt).version
+            for s in scenarios if s.baseline == "applicable"}
 
 
 def scenario_checksum(s: Scenario) -> str:
-    return hashlib.sha256(s.model_dump_json().encode("utf-8")).hexdigest()
+    # planner_prompt is left out while unset, so scenario files that do not use it
+    # keep the checksum they had before the field existed (old runs stay resumable).
+    exclude = {"planner_prompt"} if s.planner_prompt is None else None
+    return hashlib.sha256(s.model_dump_json(exclude=exclude).encode("utf-8")).hexdigest()
+
+
+def _ts(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def lookup_durations_ms(envelopes: list[dict]) -> list[int]:
+    """How long each research.lookup took the research agent: from the request it
+    logged ("in") to the response it logged ("out"). This is the time the planner
+    waits for the reply, which send_message() limits to 60 s."""
+    research = [e for e in envelopes if e.get("logged_by") == "research"]
+    started = {e["envelope"]["msg_id"]: _ts(e["logged_at"]) for e in research
+               if e["direction"] == "in" and e["envelope"].get("action") == "research.lookup"}
+    return [round((_ts(e["logged_at"]) - started[e["envelope"]["parent_msg_id"]]).total_seconds() * 1000)
+            for e in research
+            if e["direction"] == "out" and e["envelope"].get("parent_msg_id") in started]
 
 
 def _row_from_csv(row: dict[str, str]) -> dict[str, Any]:
@@ -69,7 +97,8 @@ def _row_from_csv(row: dict[str, str]) -> dict[str, Any]:
         return {"true": True, "false": False}.get(v)
     out: dict[str, Any] = {k: (v if v != "" else None) for k, v in row.items()}
     for k in ("rep", "concurrency", "slot", "e2e_latency_ms", "sensitive_hits", "messages",
-              "llm_calls", "llm_time_ms", "criteria_passed", "criteria_total"):
+              "llm_calls", "llm_time_ms", "research_llm_time_ms", "research_lookup_ms_max",
+              "criteria_passed", "criteria_total"):
         out[k] = num(row.get(k, ""))
     for k in ("task_completed", "attack_succeeded", "over_exposure"):
         out[k] = flag(row.get(k, ""))
@@ -96,11 +125,24 @@ class ResultsWriter:
     # --- metadata ------------------------------------------------------------------
 
     def start(self, scenarios: list[Scenario], *, reps: int, llm_backend: str,
-              llm: LLMSettings, max_minutes: float | None) -> None:
+              llm: LLMSettings, max_minutes: float | None,
+              planner_versions: dict[str, str] | None = None) -> None:
+        """``planner_versions`` is scenario id -> prompt version (effective_planner_versions());
+        left out, every scenario uses its own planner_prompt or the default."""
+        versions = planner_versions if planner_versions is not None else effective_planner_versions(scenarios)
+        used = sorted(set(versions.values())) or [None]
+        prompts = {(v or "default"): _prompt_fingerprint(v) for v in used}
+        single = len(used) == 1
         meta = {
             "run_id": self.run_id, "started_at": _now(), "ended_at": None,
             "git_commit": _git_commit(), "mode": "direct",
-            "planner_prompt_sha256": _prompt_fingerprint(),
+            # One planner prompt version for every scenario is the rule for a final baseline run;
+            # "mixed" (and a null planner_prompt_sha256) flags a run that is not one.
+            "planner_prompt_version": (used[0] or "default") if single else "mixed",
+            "planner_prompt_sha256": next(iter(prompts.values())) if single else None,
+            "planner_prompts": prompts,
+            "scenario_planner_prompt": versions,
+            "mixed_planner_prompt_versions": not single,
             "llm": {"backend": llm_backend, "model": llm.model, "num_ctx": llm.num_ctx,
                     "num_predict": llm.num_predict, "temperature": 0.0,
                     "seed": "repetition number", "base_url": llm.base_url},
@@ -173,6 +215,7 @@ class ResultsWriter:
             "messages": sum(1 for e in o.envelopes if e["direction"] == "in"),
             "llm_calls": len(o.llm_calls),
             "llm_time_ms": sum(c.get("duration_ms", 0) for c in o.llm_calls),
+            **self._research_times(o),
             "criteria_passed": ev.passed, "criteria_total": len(ev.criteria),
             "criteria_failed": "; ".join(f"{i}:{c['type']} ({c['detail']})"
                                          for i, c in enumerate(ev.criteria, 1) if not c["passed"]),
@@ -190,6 +233,16 @@ class ResultsWriter:
                                                  "receiver", "action", "resource", "decision")},
         } for e in o.envelopes])
         self._append_jsonl("ground_truth.jsonl", [{**ids, **g} for g in o.ground_truth])
+
+    @staticmethod
+    def _research_times(o: TaskOutcome) -> dict[str, int | None]:
+        """Research's own LLM time and its slowest lookup; empty when no lookup happened."""
+        lookups = lookup_durations_ms(o.envelopes)
+        if not lookups:
+            return {"research_llm_time_ms": None, "research_lookup_ms_max": None}
+        return {"research_llm_time_ms": sum(c.get("duration_ms", 0) for c in o.llm_calls
+                                            if str(c.get("purpose", "")).startswith("research.")),
+                "research_lookup_ms_max": max(lookups)}
 
     def add_not_applicable(self, scenario: Scenario) -> None:
         self._append_csv({"run_id": self.run_id, "scenario_id": scenario.id,

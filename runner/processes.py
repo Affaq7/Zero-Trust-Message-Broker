@@ -75,6 +75,7 @@ class TestbedConfig:
     llm_base_url: str = "http://localhost:11434"
     python: str = sys.executable
     debug_prompts: bool = False              # PLANNER_DEBUG_PROMPTS=1 for the agents
+    planner_prompt: str = ""                 # PLANNER_PROMPT; "" = the planner's default version
 
 
 class Testbed:
@@ -111,6 +112,7 @@ class Testbed:
                 "LLM_BASE_URL": c.llm_base_url,
                 "PLANNER_DEBUG_PROMPTS": "1" if c.debug_prompts else "",
                 "RESEARCH_DEBUG_PROMPTS": "1" if c.debug_prompts else "",
+                "PLANNER_PROMPT": c.planner_prompt,
             })
 
     def start(self) -> "Testbed":

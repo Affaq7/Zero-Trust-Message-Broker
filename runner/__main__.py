@@ -8,7 +8,13 @@
                      scenario/rep already in its results.csv (same scenarios,
                      reps and LLM backend as the original run)
   --dry-run          only load and check the scenario files
-  --debug-prompts    write each planner prompt to the run's logs (off by default)
+  --debug-prompts    write each planner and research prompt to the run's logs (off by default)
+  --planner-prompt V run every scenario with planner prompt version V (v1 = the
+                     frozen baseline prompt, v2 = the candidate); default: each
+                     scenario's own planner_prompt, else v1. The versions and
+                     fingerprints used are recorded in run_meta.json; a run that
+                     mixes versions is flagged "mixed" (a final baseline run
+                     uses one version for all scenarios)
 
 With --llm ollama the runner first makes one small warm-up call to the model
 (and again before a later repetition if more than 4 minutes passed since the
@@ -30,7 +36,7 @@ from pathlib import Path
 
 from agents.llm import LLMSettings
 from runner.evaluate import evaluate
-from runner.results import ResultsWriter, scenario_checksum
+from runner.results import ResultsWriter, effective_planner_versions, scenario_checksum
 from runner.run import rep_dir_for, run_repetition
 from runner.scenarios import DEFAULT_SCENARIOS_DIR, REPO_ROOT, ScenarioError, load_scenarios
 from runner.warmup import Warmup, WarmupFailed, make_warmup_client, warm_up_call
@@ -49,7 +55,9 @@ def parse(argv):
     p.add_argument("--resume", metavar="RUN_ID")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--debug-prompts", action="store_true",
-                   help="write each planner prompt to <rep>/logs/prompts/ (off by default)")
+                   help="write each planner and research prompt to <rep>/logs/prompts/ (off by default)")
+    p.add_argument("--planner-prompt", choices=["v1", "v2"],
+                   help="planner prompt version for every scenario (default: the scenario's own, else v1)")
     return p.parse_args(argv)
 
 
@@ -66,9 +74,9 @@ def main(argv=None) -> int:
         return _fail(f"scenario error: {exc}")
 
     if args.resume:
-        if args.scenario or args.reps or args.llm or args.dry_run:
-            return _fail("--resume takes the run's own scenarios, reps and LLM; "
-                         "do not combine it with --scenario, --reps, --llm or --dry-run")
+        if args.scenario or args.reps or args.llm or args.dry_run or args.planner_prompt:
+            return _fail("--resume takes the run's own scenarios, reps, LLM and planner prompt; "
+                         "do not combine it with --scenario, --reps, --llm, --planner-prompt or --dry-run")
         meta_path = args.results_dir / args.resume / "run_meta.json"
         if not meta_path.exists():
             return _fail(f"no run {args.resume!r} in {args.results_dir}")
@@ -82,6 +90,7 @@ def main(argv=None) -> int:
         scenarios = {i: scenarios[i] for i in ids}
         reps_override = meta.get("reps") or None
         llm_backend = meta["llm"]["backend"]
+        versions = meta.get("scenario_planner_prompt")     # absent in runs made before versions existed
     else:
         if args.scenario:
             missing = sorted(set(args.scenario) - set(scenarios))
@@ -90,6 +99,7 @@ def main(argv=None) -> int:
             scenarios = {k: v for k, v in scenarios.items() if k in args.scenario}
         reps_override = args.reps
         llm_backend = args.llm or "fake"
+        versions = None
     if not scenarios:
         return _fail(f"no scenario files in {args.scenarios_dir}")
     if args.dry_run:
@@ -98,6 +108,8 @@ def main(argv=None) -> int:
         return 0
 
     llm = LLMSettings(base_url=os.environ.get("LLM_BASE_URL", "http://localhost:11434"))
+    if versions is None:
+        versions = effective_planner_versions(list(scenarios.values()), args.planner_prompt)
     if args.resume:
         writer = ResultsWriter(args.results_dir, args.resume)
         writer.resume()
@@ -106,8 +118,11 @@ def main(argv=None) -> int:
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         writer = ResultsWriter(args.results_dir, run_id)
         writer.start(list(scenarios.values()), reps=reps_override or 0, llm_backend=llm_backend, llm=llm,
-                     max_minutes=args.max_minutes)
+                     max_minutes=args.max_minutes, planner_versions=versions)
         print(f"run {run_id} -> {writer.dir}")
+        if len(set(versions.values())) > 1:
+            print(f"note: this run mixes planner prompt versions {dict(sorted(versions.items()))}; "
+                  f"it is not a valid final baseline (use --planner-prompt)")
     done_runs, done_na = writer.done_keys()
 
     warmup = Warmup(llm_backend, lambda: warm_up_call(make_warmup_client(llm, writer.dir / "warmup_llm")))
@@ -137,7 +152,8 @@ def main(argv=None) -> int:
                               f"not counted in any task")
                     outcomes = run_repetition(s, rep, writer.dir, concurrency=conc,
                                               llm_backend=llm_backend, llm_base_url=llm.base_url,
-                                              debug_prompts=args.debug_prompts)
+                                              debug_prompts=args.debug_prompts,
+                                              planner_prompt=versions.get(s.id))
                     warmup.note_repetition(outcomes)
                     for o in outcomes:
                         ev = evaluate(s, o)

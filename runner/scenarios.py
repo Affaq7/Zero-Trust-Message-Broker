@@ -166,6 +166,11 @@ class Scenario(Strict):
     reps: int = Field(default=1, ge=1, le=100)
     timeout_s: int = Field(default=900, ge=1, le=7200)
     concurrency: list[int] = Field(default_factory=lambda: [1])
+    # Planner prompt version for this scenario (agents.planner.PROMPT_VERSIONS);
+    # None means the planner's default (v1, the frozen baseline prompt). The
+    # runner passes it to the planner process as PLANNER_PROMPT and records the
+    # version and fingerprint per run. A final baseline run uses ONE version.
+    planner_prompt: Literal["v1", "v2"] | None = None
     # Fake-LLM replies per agent: {agent: {purpose: [reply, ...]}}; used only
     # when the run uses LLM_BACKEND=fake.
     fake_llm: dict[Name, dict[Name, list[Any]]] = Field(default_factory=dict)

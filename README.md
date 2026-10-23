@@ -317,9 +317,21 @@ Run from the repo root:
 # once the model is loaded (docs/measurements.md).
 & ".\.venv\Scripts\python.exe" -m runner --llm ollama --scenario N1 --scenario N3 --reps 3 --max-minutes 45
 
-# Add --debug-prompts to save every planner prompt and the model's reply
-# (stepNN.txt / stepNN.reply.json) under the run's logs\prompts folder.
+# Add --debug-prompts to save every planner and research prompt and the model's
+# reply (stepNN.txt / stepNN.reply.json) under the run's logs\prompts folder.
+
+# Planner prompt version: v1 (default) is the frozen baseline prompt; v2 is a
+# candidate that can use the research agent. A scenario may set "planner_prompt";
+# --planner-prompt overrides it for every scenario in the run.
+& ".\.venv\Scripts\python.exe" -m runner --planner-prompt v2 --scenario N1 --scenario N3 --reps 1
 ```
+
+`run_meta.json` records the planner prompt version and fingerprint of every
+run (`planner_prompt_version`, `planner_prompt_sha256`, `planner_prompts`,
+`scenario_planner_prompt`). A run that mixes versions is marked `mixed`
+(`planner_prompt_sha256` is `null`), the runner says so when it starts, and the
+report flags it: a final baseline uses one version for all scenarios.
+`--resume` always continues with the versions the run started with.
 
 Each command prints the run id and one line per task; the results are in
 `results\<run_id>\`.
@@ -353,7 +365,11 @@ skipped, and it refuses if a scenario file changed since the run started:
 Baseline report for one or more runs: writes `report.md` and `report.csv` into
 each run folder (per scenario: runs, task-completed rate, median/mean/max
 latency, median LLM calls and messages; not-applicable scenarios with their
-reasons; LLM settings, seeds, git commit and planner prompt fingerprint).
+reasons; LLM settings, seeds, git commit and planner prompt version and
+fingerprint). When a run used the research agent, `results.csv` also has
+`research_llm_time_ms` and `research_lookup_ms_max` (the time the planner
+waited for a `research.lookup` reply), and the report lists them and flags any
+lookup over 45 s (the hop timeout is 60 s).
 With several run ids it also writes a combined report to `results\report-<time>\`:
 
 ```powershell

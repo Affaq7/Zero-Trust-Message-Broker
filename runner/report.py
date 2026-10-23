@@ -4,8 +4,12 @@ For each run, writes report.md and report.csv into results/<run_id>/: per
 scenario the runs, task-completed rate, median/mean/max latency (completed
 runs), median LLM calls and messages; the not_applicable scenarios with
 their reasons; and the run's metadata (LLM, temperature, seeds, git commit,
-planner prompt fingerprint). With several run ids it also writes a combined
-report (runs pooled per scenario) to results/report-<time>/.
+planner prompt version and fingerprint). A run that mixed planner prompt
+versions is flagged: a final baseline uses one version for every scenario.
+Research lookups are listed with the research agent's LLM time; any lookup
+over 45 s is flagged (the planner waits at most 60 s for the reply).
+With several run ids it also writes a combined report (runs pooled per
+scenario) to results/report-<time>/.
 
 Runs made before run_meta.json stored the prompt fingerprint get it derived
 only when agents/planner.py and contracts/ are unchanged between the run's
@@ -26,10 +30,12 @@ from runner.results import _row_from_csv
 from runner.scenarios import REPO_ROOT
 
 DEFAULT_RESULTS_DIR = REPO_ROOT / "results"
+LOOKUP_WARN_MS = 45_000        # a research.lookup slower than this is flagged (hop timeout: 60 s)
 REPORT_COLUMNS = [
     "scenario_id", "category", "baseline", "runs", "task_completed", "task_completed_rate",
     "attack_succeeded", "median_latency_ms", "mean_latency_ms", "max_latency_ms",
-    "median_llm_calls", "median_messages", "not_applicable_reason",
+    "median_llm_calls", "median_messages", "median_research_llm_ms", "max_lookup_ms",
+    "slow_lookups", "not_applicable_reason",
 ]
 
 
@@ -91,6 +97,10 @@ def scenario_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "max_latency_ms": max(lat) if lat else "",
             "median_llm_calls": _median([r["llm_calls"] for r in rs]),
             "median_messages": _median([r["messages"] for r in rs]),
+            "median_research_llm_ms": _median([r.get("research_llm_time_ms") for r in rs]),
+            "max_lookup_ms": max((r["research_lookup_ms_max"] for r in rs
+                                  if r.get("research_lookup_ms_max") is not None), default=None),
+            "slow_lookups": sum(1 for r in rs if (r.get("research_lookup_ms_max") or 0) > LOOKUP_WARN_MS),
             "not_applicable_reason": "",
         })
     return out
@@ -116,22 +126,60 @@ def _ms(v) -> str:
     return "-" if v in (None, "") else f"{v / 1000:.1f} s"
 
 
+def prompt_cells(meta: dict) -> tuple[str, str, str]:
+    """(version, fingerprint cell, note) for the Runs table."""
+    if meta.get("mixed_planner_prompt_versions"):
+        shas = "; ".join(f"{v}: `{s}`" for v, s in sorted((meta.get("planner_prompts") or {}).items()))
+        per = ", ".join(f"{k}={v}" for k, v in sorted((meta.get("scenario_planner_prompt") or {}).items()))
+        return ("MIXED", shas or "not recorded",
+                f"WARNING: this run mixes planner prompt versions ({per}); a final baseline uses ONE "
+                f"version for every scenario.")
+    fp, how = prompt_fingerprint_for(meta)
+    version = meta.get("planner_prompt_version") or "v1 (run predates prompt versions)"
+    return version, (f"`{fp}`" if fp else "not recorded"), f"prompt fingerprint {how}."
+
+
+def lookup_lines(runs: list[tuple[str, dict, list]]) -> list[str]:
+    """The research section: per scenario, and a flag line for every slow lookup."""
+    seen = [(run_id, r) for run_id, _, rows in runs for r in rows
+            if r.get("research_lookup_ms_max") is not None]
+    if not seen:
+        return []
+    limit_s = LOOKUP_WARN_MS // 1000
+    lines = ["", "## Research lookups", "",
+             f"| Scenario | Runs with a lookup | Median research LLM time | Slowest lookup | Over {limit_s} s |",
+             "|---|---|---|---|---|"]
+    for sid in sorted({r["scenario_id"] for _, r in seen}):
+        rs = [r for _, r in seen if r["scenario_id"] == sid]
+        slow = sum(1 for r in rs if r["research_lookup_ms_max"] > LOOKUP_WARN_MS)
+        lines.append(f"| {sid} | {len(rs)} | {_ms(_median([r['research_llm_time_ms'] for r in rs]))} | "
+                     f"{_ms(max(r['research_lookup_ms_max'] for r in rs))} | {slow or '-'} |")
+    slow_rows = [(run_id, r) for run_id, r in seen if r["research_lookup_ms_max"] > LOOKUP_WARN_MS]
+    flags = [f"- **SLOW LOOKUP** {r['scenario_id']} rep {r['rep']} (run {run_id}, trace {r['trace_id']}): "
+             f"{_ms(r['research_lookup_ms_max'])}, over {limit_s} s; the planner stops waiting for a reply "
+             f"after 60 s." for run_id, r in slow_rows]
+    return lines + [""] + (flags or [f"No lookup took longer than {limit_s} s."])
+
+
 def render_md(title: str, runs: list[tuple[str, dict, list]], table: list[dict]) -> str:
     lines = [f"# {title}", "", f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} "
              "by `python -m runner.report`.", "", "## Runs", ""]
     lines += ["| Run | Mode | LLM | Temperature | num_ctx / num_predict | Seeds | Git commit | "
-              "Planner prompt SHA-256 |", "|---|---|---|---|---|---|---|---|"]
+              "Planner prompt version | Planner prompt SHA-256 |", "|---|---|---|---|---|---|---|---|---|"]
     notes = []
     for run_id, meta, rows in runs:
         llm = meta.get("llm", {})
-        fp, how = prompt_fingerprint_for(meta)
+        version, sha_cell, note = prompt_cells(meta)
         lines.append(f"| {run_id} | {meta.get('mode', '-')} | {llm.get('backend', '-')} {llm.get('model', '')} | "
                      f"{llm.get('temperature', '-')} | {llm.get('num_ctx', '-')} / {llm.get('num_predict', '-')} | "
                      f"{_seeds(rows)} (seed = repetition) | `{(meta.get('git_commit') or '-')[:7]}` | "
-                     f"{('`' + fp + '`') if fp else 'not recorded'} |")
-        notes.append(f"- {run_id}: prompt fingerprint {how}."
+                     f"{version} | {sha_cell} |")
+        notes.append(f"- {run_id}: {note}"
                      + (" Stopped early." if meta.get("stopped_early") else "")
                      + (f" Resumed {len(meta['resumes'])} time(s)." if meta.get("resumes") else ""))
+    if len({prompt_cells(m)[0] for _, m, _ in runs}) > 1:
+        notes.append("- WARNING: the runs above used different planner prompt versions; their rows are pooled "
+                     "below only for convenience, not as one baseline.")
     lines += ["", *notes, "", "## Results per scenario", "",
               "| Scenario | Category | Runs | Task completed | Median / mean / max latency | "
               "Median LLM calls | Median messages |", "|---|---|---|---|---|---|---|"]
@@ -145,7 +193,8 @@ def render_md(title: str, runs: list[tuple[str, dict, list]], table: list[dict])
     na = [t for t in table if t["baseline"] == "not_applicable"]
     lines += ["", "## Not applicable in direct mode", ""]
     lines += [f"- **{t['scenario_id']}**: {t['not_applicable_reason']}" for t in na] or ["- none"]
-    lines += ["", "Not-applicable scenarios are excluded from every rate. Latency counts completed runs only.", ""]
+    lines += ["", "Not-applicable scenarios are excluded from every rate. Latency counts completed runs only."]
+    lines += lookup_lines(runs) + [""]
     return "\n".join(lines)
 
 

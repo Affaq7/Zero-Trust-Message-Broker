@@ -89,14 +89,16 @@ def rep_dir_for(run_dir: Path, scenario_id: str, concurrency: int, rep: int) -> 
 
 def run_repetition(scenario: Scenario, rep: int, run_dir: Path, *, concurrency: int = 1,
                    llm_backend: str = "fake", llm_base_url: str = "http://localhost:11434",
-                   debug_prompts: bool = False) -> list[TaskOutcome]:
+                   debug_prompts: bool = False, planner_prompt: str | None = None) -> list[TaskOutcome]:
+    """``planner_prompt`` (v1/v2) overrides the scenario's own planner_prompt;
+    both unset means the planner's default version."""
     if scenario.baseline != "applicable":
         raise ValueError(f"{scenario.id} is not applicable in direct mode; nothing to run")
     rep_dir = rep_dir_for(run_dir, scenario.id, concurrency, rep)
     config = TestbedConfig(
         agents=[a.model_dump() for a in scenario.agents], run_dir=rep_dir, seed=rep,
         llm_backend=llm_backend, fake_llm=scenario.fake_llm, llm_base_url=llm_base_url,
-        debug_prompts=debug_prompts)
+        debug_prompts=debug_prompts, planner_prompt=planner_prompt or scenario.planner_prompt or "")
     log_dir = rep_dir / "logs"
 
     with Testbed(config) as tb:
