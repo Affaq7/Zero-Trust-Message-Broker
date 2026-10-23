@@ -145,6 +145,11 @@ The planner prompt is FROZEN for the baseline: `agents.planner.prompt_fingerprin
 must equal the "Frozen planner prompt SHA-256" in docs/measurements.md (a test
 checks it). Change the prompt only with the user's approval, then record the
 new hash there with a note.
+Planner prompt versions: v1 is the frozen prompt above and the default. v2 is a
+CANDIDATE (adds research.lookup, 5 steps), chosen by PLANNER_PROMPT (the runner
+sets it from the scenario's `planner_prompt` or `--planner-prompt`). v2 becomes
+the default, with its own recorded hash, only with the user's approval. The
+research prompt (`agents.research.prompt_fingerprint()`) is not frozen yet.
 Steps: 0 docs; 1 mock skeleton + seeded SQLite + ground truth; 2 DB
 endpoints; 3 file store + web fixtures; 4 mail sink + admin handler;
 5 venv check/split; 6 LLM layer + fake backend; 7 POST /task + stub tokens;

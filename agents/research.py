@@ -314,7 +314,7 @@ class ResearchAgent:
                                    error=f"{LOOKUP_ACTION} needs at least one source; none were given")
         state = self.graph.invoke(
             {"query": req.query, "trace_id": env.trace_id, "chain": list(env.delegation_chain),
-             "sources": req.sources[:req.max_sources], "reads": [], "extra": [], "decision": None,
+             "sources": list(dict.fromkeys(req.sources))[:req.max_sources], "reads": [], "extra": [], "decision": None,
              "answer": None, "error": None},
             {"recursion_limit": 2 * self.max_steps + 6},
         )

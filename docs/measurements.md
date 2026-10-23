@@ -98,6 +98,32 @@ and record the new messages, LLM calls and latency here. The extra hop adds
 two small HTTP calls and no model time, so the latency is expected to be
 close, but that is not measured.
 
+## Planner prompt v2 (candidate, not frozen)
+
+Added 2026-10-24 beside the frozen prompt above, which stays version v1 and
+the default (`PLANNER_PROMPT` unset). v2 adds a `research.lookup` block, a
+"Known sources" list (HR policy file, Q3 report file, Q3 market page), three
+rules (documents and pages go through `research.lookup`; `file.read_internal`
+only for a path the task names; get everything first and send the email last),
+a closing-line clause for the email, and a limit of 5 steps instead of 4. It
+has no recorded hash yet because it will change during live tuning;
+`agents.planner.prompt_fingerprint("v2")` computes it and every run records
+the version and fingerprint in `run_meta.json`.
+
+**Budget (estimates from `estimate_tokens`, which runs about 1.3x high; limit
+is 80% of num_ctx 4096 = 3276):**
+
+| Version | System prompt | Worst-case history | + 200 + num_predict 256 | Total |
+|---|---|---|---|---|
+| v1 | 1367 | 4 steps x 363 (1000-char results) = 1452 | 456 | 3275 |
+| v2, results cut at 1000 | 1749 | 5 x 363 = 1815 | 456 | 4020 (over) |
+| v2, results cut at 600 | 1749 | 5 x 230 = 1150 | 456 | 3355 (over) |
+| **v2, results cut at 500** | 1749 | 5 x 196 = 980 | 456 | **3185** |
+
+v2 therefore cuts a step's result to 500 characters in the history (v1: 1000).
+The budget test was not changed. A research answer is at most 500 characters
+and comes first in the JSON, so a long one loses only the source lists.
+
 ## Warm-up in live runs
 
 Since the runner warm-up was added, `python -m runner --llm ollama ...` makes

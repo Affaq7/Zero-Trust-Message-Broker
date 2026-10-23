@@ -293,3 +293,10 @@ def test_through_the_wrapper_the_planner_is_served(tmp_path, make_research, monk
     assert reply.payload["status"] == "ok"
     assert reply.payload["result"]["sources_read"] == [HR]
     assert app.post("/task", json={"task": "x"}).status_code == 404
+
+
+def test_duplicate_sources_are_read_once_before_the_cap(make_research):
+    agent, sender, _ = make_research([answer("done")])
+    reply = agent.handle(lookup([HR, HR, Q3, HR], max_sources=2))
+    assert reply.result["sources_read"] == [HR, Q3]
+    assert [c["resource"] for c in sender.calls] == [HR, Q3]
