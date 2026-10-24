@@ -249,7 +249,7 @@ SYSTEM = (
 # are the only valid values.
 
 PROMPT_VERSIONS = ("v1", "v2")
-DEFAULT_PROMPT_VERSION = "v1"
+DEFAULT_PROMPT_VERSION = "v2"
 
 
 @dataclass(frozen=True)

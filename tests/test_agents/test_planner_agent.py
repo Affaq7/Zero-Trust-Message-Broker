@@ -12,6 +12,14 @@ from contracts.payloads import ResponsePayload
 from wrapper.send import UnknownReceiverError
 
 
+@pytest.fixture(autouse=True)
+def planner_v1_is_the_default_here(monkeypatch):
+    """These are the v1 (historical, frozen text) planner tests; v2 is the default
+    prompt now and is covered in test_planner_versions.py."""
+    import agents.planner as planner_module
+    monkeypatch.setattr(planner_module, "DEFAULT_PROMPT_VERSION", "v1")
+
+
 class RecordingSender:
     """Stands in for send_message(); answers every request with a fixed result."""
 
@@ -270,10 +278,10 @@ def test_frozen_planner_prompt_matches_recorded_hash():
 
     from agents.planner import prompt_fingerprint
     doc = (Path(__file__).resolve().parents[2] / "docs" / "measurements.md").read_text(encoding="utf-8")
-    recorded = re.search(r"Frozen planner prompt SHA-256: `([0-9a-f]{64})`", doc)
-    assert recorded, "docs/measurements.md has no 'Frozen planner prompt SHA-256' line"
-    assert prompt_fingerprint() == recorded.group(1), \
-        "the planner prompt changed: if intended, record the new hash in docs/measurements.md"
+    recorded = re.search(r"Historical planner prompt v1 SHA-256: `([0-9a-f]{64})`", doc)
+    assert recorded, "docs/measurements.md has no 'Historical planner prompt v1 SHA-256' line"
+    assert prompt_fingerprint("v1") == recorded.group(1), \
+        "the v1 planner prompt is historical and must not change"
 
 
 def test_any_prompt_edit_changes_the_fingerprint(monkeypatch):

@@ -131,26 +131,29 @@ Goal: mock services, five real agents, scenario runner, baseline runs in
 MODE=direct. Agents get JSON decisions from llama3:8b (no native tool
 calling); code performs actions. Scenario data is runner-only and agents
 never read it. scenarios/source/ (the team's CSV) is never committed.
-Encoded so far: N1 and N3 (run, planner prompt v1), N2 and N4 (run with the
-candidate planner prompt v2; fake-LLM only until the live tuning), and A9, A10,
-A11, A12, A14 as not_applicable (nothing runs; excluded from rates). Encode
-others only when the user says so (P1 and the other attacks wait on G2-G4 and
-the malicious agent).
+Encoded so far: N1, N2, N3 and N4 (run; live 3/3 each under planner prompt
+v2), and A9, A10, A11, A12, A14 as not_applicable (nothing runs; excluded from
+rates). Encode others only when the user says so (P1 and the other attacks wait
+on G2-G4 and the malicious agent).
 Stage files by name (not `git add -A`) while the CSV exists.
 Mail path: planner -> tool -> mailer (mail.deliver) -> mock mail sink. The
 mailer agent (deterministic, no LLM) is the only caller of the sink. It applies
 no access rule: in direct mode it accepts mail.deliver from any sender (the
 catalog says only the tool may call it; the broker enforces that). A scenario
 whose tool sends mail must list `mailer` in its agents (N3 does).
-The planner prompt is FROZEN for the baseline: `agents.planner.prompt_fingerprint()`
-must equal the "Frozen planner prompt SHA-256" in docs/measurements.md (a test
-checks it). Change the prompt only with the user's approval, then record the
-new hash there with a note.
-Planner prompt versions: v1 is the frozen prompt above and the default. v2 is a
-CANDIDATE (adds research.lookup, 5 steps), chosen by PLANNER_PROMPT (the runner
-sets it from the scenario's `planner_prompt` or `--planner-prompt`). v2 becomes
-the default, with its own recorded hash, only with the user's approval. The
-research prompt (`agents.research.prompt_fingerprint()`) is not frozen yet.
+Two prompts are FROZEN. Change either only with the user's approval, then record
+the newly computed hash in docs/measurements.md with a note (tests fail until you do):
+- the default planner prompt, v2 (`agents.planner.prompt_fingerprint()`, "Frozen
+  planner prompt SHA-256 (v2, the default)");
+- the research prompt (`agents.research.prompt_fingerprint()`, "Frozen research
+  prompt SHA-256").
+Planner prompt v1 is HISTORICAL (hash "Historical planner prompt v1 SHA-256"; its
+N1/N3 results are the first baseline). It stays selectable by name
+(PLANNER_PROMPT=v1 or `--planner-prompt v1`) and its text must not change. The
+runner sets PLANNER_PROMPT from a scenario's optional `planner_prompt` or
+`--planner-prompt`; no scenario file needs it now. The final baseline run uses
+ONE planner prompt version for every scenario (run_meta.json records version and
+fingerprint; a mixed run is flagged).
 Steps: 0 docs; 1 mock skeleton + seeded SQLite + ground truth; 2 DB
 endpoints; 3 file store + web fixtures; 4 mail sink + admin handler;
 5 venv check/split; 6 LLM layer + fake backend; 7 POST /task + stub tokens;

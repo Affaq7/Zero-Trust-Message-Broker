@@ -24,14 +24,15 @@ def inbound(o):
 
 # --- the files --------------------------------------------------------------------------------
 
-def test_both_ask_for_planner_prompt_v2_and_start_the_research_process(scenarios):
+def test_neither_sets_a_planner_prompt_and_both_start_the_research_process(scenarios):
+    for sid in ("N1", "N2", "N3", "N4"):
+        assert scenarios[sid].planner_prompt is None        # all use the default (v2)
     for sid in ("N2", "N4"):
         s = scenarios[sid]
-        assert (s.category, s.baseline, s.planner_prompt) == ("normal", "applicable", "v2")
+        assert (s.category, s.baseline) == ("normal", "applicable")
         assert "research" in [a.name for a in s.agents] and s.entry.agent == "planner"
     assert [a.name for a in scenarios["N2"].agents] == ["planner", "research", "tool"]
     assert [a.name for a in scenarios["N4"].agents] == ["planner", "research", "database", "tool", "mailer"]
-    assert scenarios["N1"].planner_prompt is None and scenarios["N3"].planner_prompt is None   # still v1
 
 
 @pytest.mark.parametrize("sid", ["N2", "N4"])

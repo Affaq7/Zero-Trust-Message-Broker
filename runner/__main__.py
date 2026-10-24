@@ -11,7 +11,7 @@
   --debug-prompts    write each planner and research prompt to the run's logs (off by default)
   --planner-prompt V run every scenario with planner prompt version V (v1 = the
                      frozen baseline prompt, v2 = the candidate); default: each
-                     scenario's own planner_prompt, else v1. The versions and
+                     scenario's own planner_prompt, else the planner default (v2). The versions and
                      fingerprints used are recorded in run_meta.json; a run that
                      mixes versions is flagged "mixed" (a final baseline run
                      uses one version for all scenarios)
@@ -57,7 +57,7 @@ def parse(argv):
     p.add_argument("--debug-prompts", action="store_true",
                    help="write each planner and research prompt to <rep>/logs/prompts/ (off by default)")
     p.add_argument("--planner-prompt", choices=["v1", "v2"],
-                   help="planner prompt version for every scenario (default: the scenario's own, else v1)")
+                   help="planner prompt version for every scenario (default: the scenario's own, else the planner default, v2)")
     return p.parse_args(argv)
 
 

@@ -55,9 +55,9 @@ def test_checksum_is_unchanged_while_the_field_is_unset():
 
 
 def test_effective_versions_override_beats_field_beats_default():
-    a, b = scenario(id="A1"), scenario(id="A2", planner_prompt="v2")
+    a, b = scenario(id="A1"), scenario(id="A2", planner_prompt="v1")
     na = scenario(id="A3", baseline="not_applicable", not_applicable_reason="x")
-    assert effective_planner_versions([a, b, na]) == {"A1": "v1", "A2": "v2"}       # not_applicable runs nothing
+    assert effective_planner_versions([a, b, na]) == {"A1": "v2", "A2": "v1"}       # not_applicable runs nothing
     assert effective_planner_versions([a, b], "v2") == {"A1": "v2", "A2": "v2"}
     assert effective_planner_versions([a, b], "v1") == {"A1": "v1", "A2": "v1"}
     with pytest.raises(ValueError):
@@ -111,23 +111,23 @@ def start(tmp_path, scenarios, versions=None):
 
 def test_meta_records_one_version_and_its_fingerprint(tmp_path):
     meta = start(tmp_path, [scenario(id="A1"), scenario(id="A2")])
-    assert meta["planner_prompt_version"] == "v1" and meta["mixed_planner_prompt_versions"] is False
-    assert meta["planner_prompt_sha256"] == prompt_fingerprint("v1") == meta["planner_prompts"]["v1"]
-    assert meta["scenario_planner_prompt"] == {"A1": "v1", "A2": "v1"}
+    assert meta["planner_prompt_version"] == "v2" and meta["mixed_planner_prompt_versions"] is False
+    assert meta["planner_prompt_sha256"] == prompt_fingerprint() == meta["planner_prompts"]["v2"]
+    assert meta["scenario_planner_prompt"] == {"A1": "v2", "A2": "v2"}
 
 
-def test_meta_for_a_v2_run(tmp_path):
-    meta = start(tmp_path, [scenario(id="A1"), scenario(id="A2")], {"A1": "v2", "A2": "v2"})
-    assert meta["planner_prompt_version"] == "v2"
-    assert meta["planner_prompt_sha256"] == prompt_fingerprint("v2") != prompt_fingerprint("v1")
+def test_meta_for_a_v1_run(tmp_path):
+    meta = start(tmp_path, [scenario(id="A1"), scenario(id="A2")], {"A1": "v1", "A2": "v1"})
+    assert meta["planner_prompt_version"] == "v1"
+    assert meta["planner_prompt_sha256"] == prompt_fingerprint("v1") != prompt_fingerprint("v2")
 
 
 def test_meta_flags_a_mixed_run(tmp_path):
-    meta = start(tmp_path, [scenario(id="A1"), scenario(id="A2", planner_prompt="v2")])
+    meta = start(tmp_path, [scenario(id="A1"), scenario(id="A2", planner_prompt="v1")])
     assert meta["planner_prompt_version"] == "mixed" and meta["mixed_planner_prompt_versions"] is True
     assert meta["planner_prompt_sha256"] is None
     assert meta["planner_prompts"] == {"v1": prompt_fingerprint("v1"), "v2": prompt_fingerprint("v2")}
-    assert meta["scenario_planner_prompt"] == {"A1": "v1", "A2": "v2"}
+    assert meta["scenario_planner_prompt"] == {"A1": "v2", "A2": "v1"}
 
 
 # --- research timings -------------------------------------------------------------------------
@@ -253,40 +253,40 @@ def planner_prompt_file(run_dir):
     return path.read_text(encoding="utf-8")
 
 
-def test_default_run_uses_v1(tmp_path, scenarios_dir):
+def test_default_run_uses_v2(tmp_path, scenarios_dir):
     code, run_dir = run_cli(tmp_path, scenarios_dir, "--debug-prompts")
     meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
+    assert code == 0 and meta["planner_prompt_version"] == "v2"
+    assert meta["planner_prompt_sha256"] == prompt_fingerprint()
+    assert "Known sources:" in planner_prompt_file(run_dir)
+
+
+def test_cli_override_runs_the_planner_with_v1(tmp_path, scenarios_dir):
+    code, run_dir = run_cli(tmp_path, scenarios_dir, "--debug-prompts", "--planner-prompt", "v1")
+    meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
     assert code == 0 and meta["planner_prompt_version"] == "v1"
+    assert meta["scenario_planner_prompt"] == {"X1": "v1"}
     assert meta["planner_prompt_sha256"] == prompt_fingerprint("v1")
     assert "Known sources:" not in planner_prompt_file(run_dir)
-
-
-def test_cli_override_runs_the_planner_with_v2(tmp_path, scenarios_dir):
-    code, run_dir = run_cli(tmp_path, scenarios_dir, "--debug-prompts", "--planner-prompt", "v2")
-    meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
-    assert code == 0 and meta["planner_prompt_version"] == "v2"
-    assert meta["scenario_planner_prompt"] == {"X1": "v2"}
-    assert meta["planner_prompt_sha256"] == prompt_fingerprint("v2")
-    assert "Known sources:" in planner_prompt_file(run_dir)
     assert read_csv(run_dir / "results.csv")[0]["task_completed"] == "true"
 
 
-def test_a_scenario_can_ask_for_v2(tmp_path, scenarios_dir):
-    (scenarios_dir / "x1.json").write_text(json.dumps({**EXAMPLE_FILE, "planner_prompt": "v2"}), encoding="utf-8")
+def test_a_scenario_can_ask_for_v1(tmp_path, scenarios_dir):
+    (scenarios_dir / "x1.json").write_text(json.dumps({**EXAMPLE_FILE, "planner_prompt": "v1"}), encoding="utf-8")
     code, run_dir = run_cli(tmp_path, scenarios_dir, "--debug-prompts")
-    assert "Known sources:" in planner_prompt_file(run_dir)
-    assert json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))["planner_prompt_version"] == "v2"
+    assert "Known sources:" not in planner_prompt_file(run_dir)
+    assert json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))["planner_prompt_version"] == "v1"
 
 
 def test_the_override_wins_over_the_scenario_file(tmp_path, scenarios_dir):
-    (scenarios_dir / "x1.json").write_text(json.dumps({**EXAMPLE_FILE, "planner_prompt": "v2"}), encoding="utf-8")
-    _, run_dir = run_cli(tmp_path, scenarios_dir, "--debug-prompts", "--planner-prompt", "v1")
-    assert "Known sources:" not in planner_prompt_file(run_dir)
+    (scenarios_dir / "x1.json").write_text(json.dumps({**EXAMPLE_FILE, "planner_prompt": "v1"}), encoding="utf-8")
+    _, run_dir = run_cli(tmp_path, scenarios_dir, "--debug-prompts", "--planner-prompt", "v2")
+    assert "Known sources:" in planner_prompt_file(run_dir)
 
 
 def test_a_mixed_run_is_announced_and_flagged(tmp_path, scenarios_dir, capsys):
     (scenarios_dir / "x2.json").write_text(
-        json.dumps({**EXAMPLE_FILE, "id": "X2", "planner_prompt": "v2"}), encoding="utf-8")
+        json.dumps({**EXAMPLE_FILE, "id": "X2", "planner_prompt": "v1"}), encoding="utf-8")
     code, run_dir = run_cli(tmp_path, scenarios_dir)
     meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
     assert code == 0 and meta["planner_prompt_version"] == "mixed"
@@ -296,11 +296,11 @@ def test_a_mixed_run_is_announced_and_flagged(tmp_path, scenarios_dir, capsys):
 def test_resume_takes_the_runs_own_versions(tmp_path, scenarios_dir, capsys):
     results = tmp_path / "results"
     assert main(["--scenarios-dir", str(scenarios_dir), "--results-dir", str(results), "--reps", "1",
-                 "--planner-prompt", "v2"]) == 0
+                 "--planner-prompt", "v1"]) == 0
     [run_dir] = list(results.iterdir())
     (run_dir / "results.csv").write_text(",".join(COLUMNS) + "\n", encoding="utf-8")      # as if nothing finished
     args = ["--scenarios-dir", str(scenarios_dir), "--results-dir", str(results)]
-    assert main([*args, "--resume", run_dir.name, "--planner-prompt", "v1"]) == 2
+    assert main([*args, "--resume", run_dir.name, "--planner-prompt", "v2"]) == 2
     assert "--planner-prompt" in capsys.readouterr().err
     assert main([*args, "--resume", run_dir.name, "--debug-prompts"]) == 0
-    assert "Known sources:" in planner_prompt_file(run_dir)          # the resumed repetition ran with v2
+    assert "Known sources:" not in planner_prompt_file(run_dir)      # the resumed repetition ran with v1

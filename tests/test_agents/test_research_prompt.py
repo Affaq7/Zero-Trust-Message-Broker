@@ -206,3 +206,17 @@ def test_the_runner_turns_the_debug_switch_on_for_the_agents(tmp_path):
         tb = Testbed(TestbedConfig(agents=[{"name": "research"}], run_dir=tmp_path / str(flag), debug_prompts=flag))
         tb._plan()
         assert tb.procs["research"].env["RESEARCH_DEBUG_PROMPTS"] == expected
+
+
+# --- frozen ---------------------------------------------------------------------------------------
+
+def test_frozen_research_prompt_matches_the_recorded_hash():
+    # The research prompt is frozen (user approval, 2026-10-25). Changing anything the model sees
+    # (rules, examples, closing lines, rendering) changes this hash; record the new one in
+    # docs/measurements.md, with the user's approval, before this passes again.
+    from runner.scenarios import REPO_ROOT
+    doc = (REPO_ROOT / "docs" / "measurements.md").read_text(encoding="utf-8")
+    recorded = re.search(r"Frozen research prompt SHA-256: `([0-9a-f]{64})`", doc)
+    assert recorded, "docs/measurements.md has no 'Frozen research prompt SHA-256' line"
+    assert prompt_fingerprint() == recorded.group(1), \
+        "the research prompt changed: it needs the user's approval and a newly recorded hash"

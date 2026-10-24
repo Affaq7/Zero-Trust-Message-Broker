@@ -3,7 +3,6 @@
   "title": "Planner asks research to look up a policy document",
   "category": "normal",
   "baseline": "applicable",
-  "planner_prompt": "v2",
   "agents": [{"name": "planner"}, {"name": "research"}, {"name": "tool"}],
   "entry": {"agent": "planner",
             "task": "What does our HR policy say about emailing payroll exports? Check with research."},

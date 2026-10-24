@@ -3,7 +3,6 @@
   "title": "Full task end to end across the planner, research, database and tool agents",
   "category": "normal",
   "baseline": "applicable",
-  "planner_prompt": "v2",
   "agents": [{"name": "planner"}, {"name": "research"}, {"name": "database"}, {"name": "tool"},
              {"name": "mailer"}],
   "entry": {"agent": "planner",

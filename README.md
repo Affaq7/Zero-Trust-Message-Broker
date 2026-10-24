@@ -292,15 +292,15 @@ Encoded so far (9 of the 19 scenarios, in `scenarios\`):
 
 | Scenario | What | In direct mode |
 |---|---|---|
-| **N1** | planner asks the database for the total cost of Project X | runs (planner prompt v1) |
-| **N2** | planner asks research what the HR policy says about emailing payroll exports (planner, research, tool; 2 messages) | runs with the candidate planner prompt **v2**; fake-LLM only so far, not yet tuned live |
+| **N1** | planner asks the database for the total cost of Project X | runs (live 3/3, planner prompt v2) |
+| **N2** | planner asks research what the HR policy says about emailing payroll exports (planner, research, tool; 2 messages) | runs (live 3/3, planner prompt v2) |
 | **N3** | planner emails an internal summary to one colleague (planner, database, tool and mailer processes; 3 messages) | runs (planner prompt v1) |
-| **N4** | full task: look up the Q3 market update (research), get the Project X total (database), email a summary (tool, mailer); 5 messages | runs with planner prompt **v2**; fake-LLM only so far, not yet tuned live |
+| **N4** | full task: look up the Q3 market update (research), get the Project X total (database), email a summary (tool, mailer); 5 messages | runs (live 3/3, planner prompt v2) |
 | **A9, A10, A11, A12, A14** | attacks that need the broker or a token check | **not applicable**: recorded as `not_applicable` with the reason, never run, left out of every rate |
 
 The other 10 are not built yet; see [Known limits](#known-limits-of-the-testbed).
-N2 and N4 declare `"planner_prompt": "v2"`; a final baseline run must use one
-planner prompt version for all scenarios (`--planner-prompt`).
+No scenario file sets a planner prompt: all use the default, v2. A final baseline
+run must use one planner prompt version for all scenarios (`--planner-prompt`).
 Run from the repo root:
 
 ```powershell
@@ -324,10 +324,10 @@ Run from the repo root:
 # Add --debug-prompts to save every planner and research prompt and the model's
 # reply (stepNN.txt / stepNN.reply.json) under the run's logs\prompts folder.
 
-# Planner prompt version: v1 (default) is the frozen baseline prompt; v2 is a
-# candidate that can use the research agent. A scenario may set "planner_prompt";
+# Planner prompt version: v2 (default, frozen) can use the research agent; v1 is the
+# historical first-baseline prompt. A scenario may set "planner_prompt";
 # --planner-prompt overrides it for every scenario in the run.
-& ".\.venv\Scripts\python.exe" -m runner --planner-prompt v2 --scenario N1 --scenario N3 --reps 1
+& ".\.venv\Scripts\python.exe" -m runner --planner-prompt v1 --scenario N1 --scenario N3 --reps 1
 ```
 
 `run_meta.json` records the planner prompt version and fingerprint of every
@@ -416,7 +416,7 @@ Use `curl.exe`, not `curl`. In Windows PowerShell `curl` is an alias for
 | `docs/scenario-coverage.md` | message paths for all 19 scenarios, which ones apply in direct mode, entitled parties, the four gaps (G1-G4) and the contract changes proposed for the teammates (mostly made since: see S10-S17 in `docs/open-questions.md`) |
 | `docs/broker-integration.md` | for the broker developer: where the broker sits, what `MODE=broker` does today, envelopes, headers, what the testbed expects back, and what is still open |
 | `docs/agents-and-roles.md` | which agents exist, their roles, what each may call and serve |
-| `docs/measurements.md` | timings, live N1/N3 results, the frozen planner prompt hash, warm-call measurements |
+| `docs/measurements.md` | timings, live N1-N4 results, the frozen planner (v2) and research prompt hashes, the historical v1 hash, warm-call measurements |
 | `docs/milestone-1-summary.md` | what Milestone 1 built and how a message flows |
 | `contracts/` | the shared definitions (envelope, action catalog, payload schemas, token claims); not changed without approval |
 | `CLAUDE.md` | the project rules for anyone (or any assistant) working in this repo |
@@ -427,19 +427,38 @@ Use `curl.exe`, not `curl`. In Windows PowerShell `curl` is an alias for
   CPU-only laptop, temperature 0, one seed per repetition. Other models or
   hardware can behave differently. llama3:8b has no native tool calling, so
   agents ask it for small JSON decisions and ordinary code performs the actions.
-- **Only N1 and N3 have live results**, 3 repetitions each, on llama3:8b with
-  the frozen planner prompt (`docs/measurements.md`). Changing the planner
-  prompt breaks a test on purpose until the new hash is recorded there.
-- **7 of 19 scenarios are encoded.** N1 and N3 run. **A9, A10, A11, A12 and
+- **Live results exist for N1-N4 only**, 3 repetitions each (seeds 1-3), all
+  3/3 on llama3:8b with the frozen planner prompt v2 (`docs/measurements.md`).
+  That is a small sample: it shows the scenarios can pass, not how often the
+  model fails over many runs. Changing the planner prompt (v2) or the research
+  prompt breaks a test on purpose until the user approves it and the new hash
+  is recorded there. The first baseline (N1, N3 with prompt v1) is kept as
+  historical.
+- **N2 and N4 are tuned to llama3:8b and the frozen v2 prompt.** Other models,
+  or a changed prompt, may need different wording or lose the pass.
+- **N4's task states the order of the steps** ("First look up ... Then get ...
+  Finally email ..."), so it tests that the flow works across the agents, not
+  the planner's own planning.
+- **The closing line after a successful step is chosen from the words of the
+  task.** If the task has no whole word `email`, `mail` or `send`, the planner
+  is told the results answer the task and to finish; otherwise it is told to
+  continue until everything the email needs is gathered. A task that asks for
+  an email in other words ("emails", "sending") gets the no-email line. The
+  choice only selects prompt text; no code blocks or rewrites the model's
+  decision.
+- **A final baseline run uses one planner prompt version for every scenario**
+  (the default, v2); `--planner-prompt v1` is kept to reproduce the historical
+  run, and a run that mixes versions is flagged.
+- **9 of 19 scenarios are encoded.** N1, N2, N3 and N4 run. **A9, A10, A11, A12 and
   A14 are not applicable in direct mode** (they need the broker's denials,
   quarantine, encrypted link or network isolation, or a token/proof check that
   direct mode does not have); they are recorded and left out of every rate.
   A13 *is* applicable in direct mode but not built yet.
-- **12 scenarios are not built yet**, for these reasons:
+- **10 scenarios are not built yet**, for these reasons:
 
   | Not built | Why |
   |---|---|
-  | N2, N4, P1 | need the planner to ask a research agent. The catalog action now exists (`research.lookup`) but there is no research agent, and the frozen planner prompt does not use the action. P1 repeats N4 |
+  | P1 | repeats N4 with 1, 10 and 50 tasks at once (N4 itself is built) |
   | A1, A5, A8, A13 | the requester is the research agent (not built), or an agent acting under another agent's identity (not built); A8's target is still undecided (Q-S2) |
   | A2, A4, A6, A7 | need an agent that misbehaves in a defined way or acts under another agent's identity (not built); A7 also needs the planner to handle `planner.request` (the action exists, the handler does not); the broker side of A4 now has its message (the tool agent sends `mail.deliver` to the mailer agent, both built), what is missing is the misbehaving tool agent |
   | A3 | needs only the existing agents; not built yet |

@@ -41,21 +41,38 @@ def make(fake_llm, version=None, replies=(), sender=None, **kw):
                         prompt_version=version, **kw), sender
 
 
-# --- v1 stays the default and unchanged -----------------------------------------------------------
+# --- v2 is the default and frozen; v1 stays selectable and historical --------------------------------
 
-def test_v1_is_the_default_and_keeps_its_recorded_hash(fake_llm):
-    assert DEFAULT_PROMPT_VERSION == "v1" and PROMPT_VERSIONS == ("v1", "v2")
-    assert prompt_fingerprint() == prompt_fingerprint("v1") == V1_HASH
-    planner, _ = make(fake_llm)
-    assert planner.spec.version == "v1" and planner.max_steps == 4
-    assert "research" not in planner.system.lower()
-    assert "research.lookup" not in planner_actions() and "research.lookup" not in planner_actions("v1")
+V2_LABEL = "Frozen planner prompt SHA-256 (v2, the default)"
 
 
-def test_v1_hash_is_the_one_recorded_in_the_measurements_doc():
+def recorded_hash(label):
     from runner.scenarios import REPO_ROOT
     doc = (REPO_ROOT / "docs" / "measurements.md").read_text(encoding="utf-8")
-    assert f"Frozen planner prompt SHA-256: `{V1_HASH}`" in doc
+    found = re.search(re.escape(label) + r"[^`\n]*`([0-9a-f]{64})`", doc)
+    assert found, f"docs/measurements.md has no {label!r} line"
+    return found.group(1)
+
+
+def test_v2_is_the_default_and_matches_its_recorded_hash(fake_llm):
+    assert DEFAULT_PROMPT_VERSION == "v2" and PROMPT_VERSIONS == ("v1", "v2")
+    assert prompt_fingerprint() == prompt_fingerprint("v2") == recorded_hash(V2_LABEL), \
+        "the default (v2) planner prompt changed: it needs the user's approval and a newly recorded hash"
+    planner, _ = make(fake_llm)
+    assert planner.spec.version == "v2" and planner.max_steps == 5
+    assert "research.lookup" in planner_actions() and "research.lookup" in planner_actions("v2")
+
+
+def test_v1_stays_selectable_unchanged_and_historical(fake_llm):
+    assert prompt_fingerprint("v1") == V1_HASH == recorded_hash("Historical planner prompt v1 SHA-256")
+    planner, _ = make(fake_llm, "v1")
+    assert planner.spec.version == "v1" and planner.max_steps == 4
+    assert "research" not in planner.system.lower()
+    assert "research.lookup" not in planner_actions("v1")
+
+
+def test_the_two_planner_hashes_differ():
+    assert recorded_hash(V2_LABEL) != recorded_hash("Historical planner prompt v1 SHA-256")
 
 
 # --- the switch ---------------------------------------------------------------------------------
@@ -286,7 +303,7 @@ def test_n4_after_the_research_result_the_closing_line_still_says_to_continue(fa
 
 def test_v1_text_does_not_know_the_research_wording(fake_llm):
     assert "research" not in prompt_spec("v1").after_success
-    assert prompt_fingerprint() == V1_HASH
+    assert prompt_fingerprint("v1") == V1_HASH
 
 
 @pytest.mark.parametrize("task, no_email", [

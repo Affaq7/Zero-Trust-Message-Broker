@@ -167,7 +167,7 @@ class Scenario(Strict):
     timeout_s: int = Field(default=900, ge=1, le=7200)
     concurrency: list[int] = Field(default_factory=lambda: [1])
     # Planner prompt version for this scenario (agents.planner.PROMPT_VERSIONS);
-    # None means the planner's default (v1, the frozen baseline prompt). The
+    # None means the planner's default (v2; v1 is the historical prompt). The
     # runner passes it to the planner process as PLANNER_PROMPT and records the
     # version and fingerprint per run. A final baseline run uses ONE version.
     planner_prompt: Literal["v1", "v2"] | None = None

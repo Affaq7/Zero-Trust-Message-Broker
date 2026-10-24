@@ -11,6 +11,10 @@ Machine: Intel i5-1145G7, 16 GB RAM, no NVIDIA GPU; Ollama runs llama3:8b
 | 2026-10-21 | Warm planner call (from the live run's LLM call logs) | 16.8-24.2 s, median about 19 s | Run 20261021T205331Z, see below. |
 | 2026-10-21 | First LLM call after the model loads | ~35 s | As in the cold-start row above. |
 
+> **Historical.** Everything from here to the end of the "Planner prompt v1" section was measured with
+> planner prompt v1, which is no longer the default (v2 is, see "Planner prompt v2" below). Those
+> numbers stay as the record of the first baseline; they are not the final baseline.
+
 ## Live baseline runs: N1 and N3 (run 20261021T205331Z)
 
 llama3:8b, temperature 0, num_ctx 4096, num_predict 256, seeds 1-3 (seed =
@@ -55,7 +59,7 @@ you to send) ...", the model re-sent its step-1 decision (same payload, same
 reason) at steps 2-4 and answered "184,250" only when the step limit forced
 it. A question is never "done" in that wording.
 
-## Frozen planner prompt
+## Planner prompt v1 (historical, selectable with PLANNER_PROMPT=v1)
 
 After the run above, the closing line after a successful step was changed
 once more and the planner prompt was then frozen for the baseline:
@@ -65,14 +69,16 @@ once more and the planner prompt was then frozen for the baseline:
 > "answer": "..."} now. If an email the task asks for has not been sent yet,
 > send it now.
 
-Frozen planner prompt SHA-256: `0d22529bac9fc91d4120a0d5bf913be8b8e345db4037b00cc102915bd6b02d22`
+Historical planner prompt v1 SHA-256: `0d22529bac9fc91d4120a0d5bf913be8b8e345db4037b00cc102915bd6b02d22`
 
 The hash is `agents.planner.prompt_fingerprint()`: SHA-256 over the system
 prompt and the prompts built for five fixed sample states (first step, after
 an OK result, after DELIVERED, after an error, at the step limit), so it
 covers the rules, examples, closing lines and step rendering. A fake N1/N3
 run (2026-10-21) confirmed the planner processes used exactly this system
-prompt. A test fails if the prompt changes without this line being updated.
+prompt. v1 stays selectable (`PLANNER_PROMPT=v1` or `--planner-prompt v1`) and a test fails if its text
+stops matching this line. The **Verified live** table below (run 20261021T232557Z, 2 messages for N3)
+is historical: it predates the mailer and v2.
 
 **Verified live** (run 20261021T232557Z, commit `b06fae7`, the frozen prompt):
 llama3:8b, temperature 0, num_ctx 4096, num_predict 256, seeds 1-3,
@@ -98,17 +104,44 @@ and record the new messages, LLM calls and latency here. The extra hop adds
 two small HTTP calls and no model time, so the latency is expected to be
 close, but that is not measured.
 
-## Planner prompt v2 (candidate, not frozen)
+## Planner prompt v2 (frozen, the default since 2026-10-25)
 
-Added 2026-10-24 beside the frozen prompt above, which stays version v1 and
-the default (`PLANNER_PROMPT` unset). v2 adds a `research.lookup` block, a
-"Known sources" list (HR policy file, Q3 report file, Q3 market page), three
-rules (documents and pages go through `research.lookup`; `file.read_internal`
-only for a path the task names; get everything first and send the email last),
-a closing-line clause for the email, and a limit of 5 steps instead of 4. It
-has no recorded hash yet because it will change during live tuning;
-`agents.planner.prompt_fingerprint("v2")` computes it and every run records
-the version and fingerprint in `run_meta.json`.
+Approved by the user after the live runs below. v2 is the default planner prompt
+(`DEFAULT_PROMPT_VERSION`); a test fails if the default's fingerprint stops
+matching this line, and the prompt may change only with the user's approval and a
+newly recorded hash.
+
+Frozen planner prompt SHA-256 (v2, the default): `cf253c5515e09be20452d2e617a82381d24d568e252212c28fe543a5542cb340`
+
+Frozen research prompt SHA-256: `59ab3a192836aeda64018b1d869541d0126f65fd7cd2eee34a204c7a88d44878`
+
+The planner hash is `agents.planner.prompt_fingerprint()` (= `prompt_fingerprint("v2")`); the
+research hash is `agents.research.prompt_fingerprint()` (system prompt plus five fixed sample
+states). A test fails if either prompt changes without its line being updated.
+
+What v2 adds to v1: a `research.lookup` block, a "Known sources" list (HR policy file, Q3
+report file, Q3 market page), three rules (documents and pages go through `research.lookup`;
+`file.read_internal` only for a path the task names; get everything first and send the email
+last), a research result shown as "The research answer is: ...", a closing line chosen from
+the words of the task (no email, mail or send as a whole word: one sentence saying the results
+answer the task and never to ask research again; otherwise the email clause, so the model
+continues until everything the email needs is gathered), 5 steps instead of 4, and results cut
+to 500 characters in the step history.
+
+**Live results under v2** (llama3:8b, temperature 0, num_ctx 4096, seeds 1-3, MODE=direct, git
+commit `f0a2671`, model warmed up by the runner before each run; one scenario per run, all 3/3
+with every criterion passing):
+
+| Scenario | Run | Reps | Criteria | Messages | LLM calls | Full task (e2e) | LLM time | Research lookup (research LLM) |
+|---|---|---|---|---|---|---|---|---|
+| N2 policy lookup | 20261024T190503Z | 3 | 13/13 each | 2 | 3 (2 planner + 1 research) | 50.2 s, 54.6 s, 52.7 s | 48.0-51.9 s | 10.7-16.6 s (9.1-15.5 s) |
+| N4 full task | 20261024T190818Z | 3 | 22/22 each | 5 | 7 | 250.8 s, 235.7 s, 236.0 s | 199-219 s | 20.9-32.1 s (16.9-30.5 s) |
+| N1 Project X total | 20261024T192118Z | 3 | 4/4 each | 1 | 3 | 65.3 s, 61.2 s, 61.7 s | 44.6-46.5 s | - |
+| N3 internal summary email | 20261024T192509Z | 3 | 5/5 each | 3 | 5 | 138.3 s, 137.7 s, 138.0 s | 105.0-107.4 s | - |
+
+No research lookup came near the 45 s report flag or the 60 s hop timeout (slowest 32.1 s, N4 rep 1).
+Under v2 the planner prompt is larger, so N1 (about 40 s under v1) and N3 (about 85 s under v1,
+2 messages) are slower; the v1 figures above are historical and not comparable one for one.
 
 **Budget (estimates from `estimate_tokens`, which runs about 1.3x high; limit
 is 80% of num_ctx 4096 = 3276):**
