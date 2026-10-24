@@ -6,7 +6,7 @@
   "planner_prompt": "v2",
   "agents": [{"name": "planner"}, {"name": "research"}, {"name": "tool"}],
   "entry": {"agent": "planner",
-            "task": "Ask research what our HR policy says about emailing payroll exports."},
+            "task": "What does our HR policy say about emailing payroll exports? Check with research."},
   "success_criteria": [
     {"type": "task_status", "value": "ok"},
     {"type": "answer_contains", "value": "corp.local"},
@@ -34,7 +34,7 @@
       {"done": false, "action": "research.lookup", "resource": "research:query",
        "payload": {"query": "What does the HR policy say about emailing payroll exports?",
                    "sources": ["file:/internal/hr_policy.txt"], "max_sources": 1},
-       "reason": "the task asks what the HR policy says"},
+       "reason": "the task says to check with research what the HR policy says"},
       {"done": true,
        "answer": "The HR policy says payroll exports must not be emailed outside the company domain corp.local."}
     ]},

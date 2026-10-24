@@ -112,3 +112,18 @@ def test_n4_checks_catch_a_missing_figure_in_the_email(scenarios):
     n4 = scenarios["N4"]
     texts = [c for c in n4.success_criteria if c.type == "ground_truth_text_contains"]
     assert [(c.field, c.value) for c in texts] == [("body", 184250), ("body", "5.2")]
+
+
+def test_n2_task_is_a_question_that_says_to_check_with_research(scenarios):
+    from agents.planner import EMAIL_WORDS, prompt_spec
+    n2 = scenarios["N2"]
+    assert n2.entry.task == "What does our HR policy say about emailing payroll exports? Check with research."
+    # the task mentions emailing but asks for no email: v2 uses the closing line without an email sentence
+    assert not EMAIL_WORDS.search(n2.entry.task)
+    assert EMAIL_WORDS.search(scenarios["N4"].entry.task)
+    first = n2.fake_llm["planner"]["planner.decide"][0]
+    assert first["payload"]["query"] == "What does the HR policy say about emailing payroll exports?"
+    assert "research" in first["reason"]
+    # the checks are unchanged
+    types = [c.type for c in n2.success_criteria]
+    assert types.count("envelope_count") == 3 and "no_sensitive_values" in types and len(types) == 13
