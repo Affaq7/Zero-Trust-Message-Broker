@@ -66,6 +66,7 @@ class PlannerState(TypedDict):
 Sender = Callable[..., Envelope]
 
 EMAIL_ACTIONS = {"tool.send_email_internal", "tool.send_email_external"}
+RESEARCH_ACTION = "research.lookup"   # shown as "The research answer is: ..." (v2 only ever calls it)
 
 # Closing line of the prompt when the previous step succeeded.
 AFTER_SUCCESS = ('If the task only asks for information and the results above contain it, or any '
@@ -84,6 +85,11 @@ def render_outcome(action: str, payload: dict[str, Any], limit: int = MAX_RESULT
     if action in EMAIL_ACTIONS and isinstance(result, dict) and result.get("status") == "delivered":
         to = ", ".join(str(a) for a in result.get("to", []))
         return f"DELIVERED. The email has been sent to {to}. It is done; do not send it again."
+    if action == RESEARCH_ACTION and isinstance(result, dict) and isinstance(result.get("answer"), str):
+        text = f"OK. The research answer is: {result['answer']}"
+        if result.get("sources_failed"):
+            text += f" (could not read: {', '.join(map(str, result['sources_failed']))})"
+        return text[:limit]
     return f"OK. Result: {json.dumps(result, ensure_ascii=False)}"[:limit]
 
 
@@ -274,8 +280,10 @@ V2_RULES = SYSTEM.removesuffix("\nActions you can use:\n") + (
     "- When the task needs several things, get them one at a time and send the email last, "
     "after you have everything it needs.\n"
     "\nActions you can use:\n")
-V2_AFTER_SUCCESS = ('If the task only asks for information and the results above contain it, or any '
-                    'email the task asks for has been DELIVERED, reply {"done": true, "answer": "..."} now. '
+V2_AFTER_SUCCESS = ('If the task only asks for information (or to ask research for it) and the results '
+                    'above contain it, or any email the task asks for has been DELIVERED, reply '
+                    '{"done": true, "answer": "..."} now. A research answer above already answers what '
+                    'research was asked: never ask research the same thing again. '
                     'If an email the task asks for has not been sent yet and you now have everything it '
                     'needs, send it now; otherwise get what is missing first.')
 V2_KNOWN_SOURCES = (

@@ -232,3 +232,54 @@ def test_the_debug_prompt_file_shows_the_v2_system(fake_llm, tmp_path, monkeypat
     text = (tmp_path / "prompts" / "planner" / "dbg" / "step01.txt").read_text(encoding="utf-8")
     assert "research.lookup" in text and "Known sources:" in text
     assert json.loads((tmp_path / "prompts" / "planner" / "dbg" / "step01.reply.json").read_text(encoding="utf-8"))["done"]
+
+
+# --- after a research result (live N2 repeated the lookup) -------------------------------------------
+
+RESEARCH_REPLY = {"answer": "Payroll exports must not be emailed outside the company domain corp.local.",
+                  "sources_read": ["file:/internal/hr_policy.txt"], "sources_failed": []}
+
+
+def after_research(planner, task):
+    outcome = planner_module.render_outcome("research.lookup", {"status": "ok", "result": RESEARCH_REPLY},
+                                            planner.spec.result_chars)
+    state = {"task": task, "trace_id": "x", "chain": ["user"], "steps": 1, "decision": None, "answer": None,
+             "error": None, "history": [{"action": "research.lookup", "resource": "research:query",
+                                         "outcome": outcome}]}
+    return planner._prompt(state)
+
+
+def test_research_result_is_shown_as_the_research_answer():
+    out = planner_module.render_outcome("research.lookup", {"status": "ok", "result": RESEARCH_REPLY}, 500)
+    assert out == "OK. The research answer is: " + RESEARCH_REPLY["answer"]
+    failed = planner_module.render_outcome("research.lookup", {"status": "ok", "result": {
+        **RESEARCH_REPLY, "sources_failed": ["file:/internal/x.txt"]}}, 500)
+    assert failed.endswith("(could not read: file:/internal/x.txt)")
+    err = planner_module.render_outcome("research.lookup", {"status": "error", "error": "no source could be read"}, 500)
+    assert err == "ERROR: no source could be read"
+    assert len(planner_module.render_outcome("research.lookup", {"status": "ok", "result": {
+        **RESEARCH_REPLY, "answer": "a" * 900}}, 500)) == 500
+
+
+def test_n2_after_the_research_result_the_closing_line_says_to_reply_done(fake_llm):
+    planner, _ = make(fake_llm, "v2")
+    prompt = after_research(planner, "Ask research what our HR policy says about emailing payroll exports.")
+    closing = prompt.splitlines()[-1]
+    assert "Step 1: research.lookup on research:query -> OK. The research answer is: Payroll exports" in prompt
+    assert "only asks for information (or to ask research for it)" in closing
+    assert 'reply {"done": true, "answer": "..."} now' in closing
+    assert "never ask research the same thing again" in closing
+
+
+def test_n4_after_the_research_result_the_closing_line_still_says_to_continue(fake_llm):
+    planner, _ = make(fake_llm, "v2")
+    closing = after_research(planner, "First look up the Q3 market update. Then get the total cost of "
+                                      "Project X. Finally email alice.morgan@corp.local a short summary of both."
+                             ).splitlines()[-1]
+    assert "email the task asks for has not been sent yet and you now have everything it needs, send it now; "\
+           "otherwise get what is missing first." in closing
+
+
+def test_v1_text_does_not_know_the_research_wording(fake_llm):
+    assert "research" not in prompt_spec("v1").after_success
+    assert prompt_fingerprint() == V1_HASH
