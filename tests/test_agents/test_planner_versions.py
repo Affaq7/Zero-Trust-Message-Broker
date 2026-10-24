@@ -135,7 +135,7 @@ def test_the_known_sources_leave_out_the_injection_fixtures():
 
 def test_v2_closing_line_waits_for_everything_before_the_email(fake_llm):
     planner, _ = make(fake_llm, "v2")
-    state = {"task": "t", "trace_id": "x", "chain": ["user"], "steps": 1, "decision": None, "answer": None,
+    state = {"task": "Look it up and email Alice.", "trace_id": "x", "chain": ["user"], "steps": 1, "decision": None, "answer": None,
              "error": None, "history": [{"action": "research.lookup", "resource": "research:query",
                                          "outcome": 'OK. Result: {"answer": "a"}'}]}
     last = planner._prompt(state).splitlines()[-1]
@@ -261,21 +261,25 @@ def test_research_result_is_shown_as_the_research_answer():
         **RESEARCH_REPLY, "answer": "a" * 900}}, 500)) == 500
 
 
+N2_TASK = "What does our HR policy say about emailing payroll exports? Check with research."
+N4_TASK = ("First look up the Q3 market update. Then get the total cost of Project X. "
+           "Finally email alice.morgan@corp.local a short summary of both.")
+NO_EMAIL_LINE = ('The results above answer the task: reply {"done": true, "answer": "..."} now; '
+                 'never ask research the same thing again.')
+
+
 def test_n2_after_the_research_result_the_closing_line_says_to_reply_done(fake_llm):
     planner, _ = make(fake_llm, "v2")
-    prompt = after_research(planner, "Ask research what our HR policy says about emailing payroll exports.")
-    closing = prompt.splitlines()[-1]
+    prompt = after_research(planner, N2_TASK)
     assert "Step 1: research.lookup on research:query -> OK. The research answer is: Payroll exports" in prompt
-    assert "only asks for information (or to ask research for it)" in closing
-    assert 'reply {"done": true, "answer": "..."} now' in closing
-    assert "never ask research the same thing again" in closing
+    assert prompt.splitlines()[-1] == NO_EMAIL_LINE
+    assert "email" not in prompt.splitlines()[-1].lower() and "sent" not in prompt.splitlines()[-1]
 
 
 def test_n4_after_the_research_result_the_closing_line_still_says_to_continue(fake_llm):
     planner, _ = make(fake_llm, "v2")
-    closing = after_research(planner, "First look up the Q3 market update. Then get the total cost of "
-                                      "Project X. Finally email alice.morgan@corp.local a short summary of both."
-                             ).splitlines()[-1]
+    closing = after_research(planner, N4_TASK).splitlines()[-1]
+    assert closing == prompt_spec("v2").after_success
     assert "email the task asks for has not been sent yet and you now have everything it needs, send it now; "\
            "otherwise get what is missing first." in closing
 
@@ -283,3 +287,48 @@ def test_n4_after_the_research_result_the_closing_line_still_says_to_continue(fa
 def test_v1_text_does_not_know_the_research_wording(fake_llm):
     assert "research" not in prompt_spec("v1").after_success
     assert prompt_fingerprint() == V1_HASH
+
+
+@pytest.mark.parametrize("task, no_email", [
+    (N2_TASK, True),
+    ("What is the total cost of Project X so far?", True),
+    ("Ask research what the Q3 report says about revenue.", True),
+    (N4_TASK, False),
+    ("Email a short summary of the total cost of Project X to alice.morgan@corp.local.", False),
+    ("Please SEND the report to Bob.", False),
+    ("Write a mail to the team.", False),
+    ("Send it.", False),
+])
+def test_closing_line_follows_the_task_text(fake_llm, task, no_email):
+    planner, _ = make(fake_llm, "v2")
+    expected = NO_EMAIL_LINE if no_email else prompt_spec("v2").after_success
+    assert after_research(planner, task).splitlines()[-1] == expected
+
+
+def test_v1_closing_line_ignores_the_task_text(fake_llm):
+    planner, _ = make(fake_llm, "v1")
+    ok = {"action": "db.query_aggregate", "resource": "db:project_costs", "outcome": "OK. Result: {}"}
+    for task in (N2_TASK, N4_TASK):
+        state = {"task": task, "trace_id": "x", "chain": ["user"], "steps": 1, "decision": None,
+                 "answer": None, "error": None, "history": [ok]}
+        assert planner._prompt(state).splitlines()[-1] == planner_module.AFTER_SUCCESS
+
+
+def test_the_error_and_first_step_lines_do_not_depend_on_the_task(fake_llm):
+    planner, _ = make(fake_llm, "v2")
+    for task in (N2_TASK, N4_TASK):
+        state = {"task": task, "trace_id": "x", "chain": ["user"], "steps": 0, "decision": None,
+                 "answer": None, "error": None, "history": []}
+        assert planner._prompt(state).splitlines()[-1] == planner_module.CHOOSE_NEXT
+
+
+def test_the_no_email_line_is_text_only_a_repeated_lookup_is_still_sent(fake_llm):
+    planner, sender = make(fake_llm, "v2", [LOOKUP, LOOKUP, finish("done")])
+    result = planner.run_task(TaskContext(task=N2_TASK, trace_id="rep"))
+    assert result.status == "ok" and [c["action"] for c in sender.calls] == ["research.lookup"] * 2
+
+
+def test_editing_the_no_email_line_changes_only_the_v2_fingerprint(monkeypatch):
+    before = prompt_fingerprint("v2")
+    monkeypatch.setattr(planner_module, "V2_AFTER_SUCCESS_NO_EMAIL", NO_EMAIL_LINE + " ")
+    assert prompt_fingerprint("v2") != before and prompt_fingerprint("v1") == V1_HASH

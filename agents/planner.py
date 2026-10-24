@@ -13,6 +13,7 @@ The planner applies no policy of its own beyond knowing what it can do.
 import hashlib
 import json
 import os
+import re
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -261,6 +262,7 @@ class PromptSpec:
     max_steps: int
     result_chars: int             # cut of one step's result in the history
     tail: str                     # appended after the database tables ("" for v1)
+    after_success_no_email: str | None = None   # closing line for a task that mentions no email (v2 only)
 
 
 # v2 pieces. Fields and guide are v1's plus research.lookup.
@@ -291,6 +293,12 @@ V2_KNOWN_SOURCES = (
     "- file:/internal/hr_policy.txt (HR policy: rules for handling employee data)\n"
     "- file:/internal/q3_report.txt (Q3 company report)\n"
     "- https://news.example.com/q3-market (web page: Q3 market update)")
+# Closing line after a successful step when the task mentions no email or sending: the
+# prompt text is chosen from the task, nothing else (no guard on the model's decision).
+V2_AFTER_SUCCESS_NO_EMAIL = ('The results above answer the task: reply {"done": true, "answer": "..."} now; '
+                             'never ask research the same thing again.')
+# Whole words, so a question that merely mentions "emailing" (N2) does not count as asking for an email.
+EMAIL_WORDS = re.compile(r"\b(email|mail|send)\b", re.IGNORECASE)
 V2_MAX_STEPS = 5          # N4 needs lookup, query, email and the finish, with one retry
 V2_RESULT_CHARS = 500     # history cut, trimmed from 1000 so five steps fit the 80% budget guard (see the test)
 
@@ -302,7 +310,7 @@ def prompt_spec(version: str | None) -> PromptSpec:
                           DEFAULT_MAX_STEPS, MAX_RESULT_CHARS, "")
     if version == "v2":
         return PromptSpec("v2", V2_RULES, V2_PROMPT_FIELDS, V2_ACTION_GUIDE, V2_AFTER_SUCCESS,
-                          V2_MAX_STEPS, V2_RESULT_CHARS, V2_KNOWN_SOURCES)
+                          V2_MAX_STEPS, V2_RESULT_CHARS, V2_KNOWN_SOURCES, V2_AFTER_SUCCESS_NO_EMAIL)
     raise ValueError(f"unknown planner prompt version {version!r}; known: {list(PROMPT_VERSIONS)}")
 
 
@@ -355,10 +363,16 @@ class PlannerAgent:
         if state["steps"] >= self.max_steps:
             parts.append(STEP_LIMIT)
         elif state["history"] and not state["history"][-1]["outcome"].startswith("ERROR"):
-            parts.append(self.spec.after_success)
+            parts.append(self._closing_after_success(state["task"]))
         else:
             parts.append(CHOOSE_NEXT)
         return "\n".join(parts)
+
+    def _closing_after_success(self, task: str) -> str:
+        no_email = self.spec.after_success_no_email
+        if no_email is not None and not EMAIL_WORDS.search(task):
+            return no_email
+        return self.spec.after_success
 
     def _debug_path(self, state: PlannerState, suffix: str) -> Path:
         folder = self.debug_dir / state["trace_id"]
@@ -447,8 +461,8 @@ def prompt_fingerprint(version: str | None = None) -> str:
     err = {"action": "db:query_aggregate", "resource": "db:project_costs",
            "outcome": render_outcome("db:query_aggregate", {"status": "error", "error": "example error"}, limit)}
 
-    def state(history, steps=None):
-        return {"task": "What is the total cost of Project X so far?", "trace_id": "t",
+    def state(history, steps=None, task="What is the total cost of Project X so far?"):
+        return {"task": task, "trace_id": "t",
                 "chain": ["user"], "history": history,
                 "steps": len(history) if steps is None else steps,
                 "decision": None, "answer": None, "error": None}
@@ -462,6 +476,7 @@ def prompt_fingerprint(version: str | None = None) -> str:
                          "answer": "The policy says exports stay inside the company.",
                          "sources_read": ["file:/internal/hr_policy.txt"], "sources_failed": []}}, limit)}
         parts.append(planner._prompt(state([looked_up])))
+        parts.append(planner._prompt(state([looked_up], task="Look up the Q3 policy, then email Alice a summary.")))
     return hashlib.sha256("\n=====\n".join(parts).encode("utf-8")).hexdigest()
 
 
