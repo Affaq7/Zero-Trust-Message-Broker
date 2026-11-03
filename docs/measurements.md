@@ -157,30 +157,54 @@ v2 therefore cuts a step's result to 500 characters in the history (v1: 1000).
 The budget test was not changed. A research answer is at most 500 characters
 and comes first in the JSON, so a long one loses only the source lists.
 
-## Live N1-N4 under the default planner prompt v2 (run 20261103T164223Z)
+## Live N1-N4 under the default planner prompt v2 (run 20261103T221930Z)
 
-llama3:8b, temperature 0, num_ctx 4096, seeds 1-3, MODE=direct, planner prompt v2 (the default,
-fingerprint `cf253c5515e0...`, `mixed: false`), git commit `6011174`, one runner warm-up call before
-the run (3.5 s, model already loaded). Started 2026-11-03 16:42 UTC, finished 17:04 UTC, not stopped
-early. **12 of 12 repetitions passed, every criterion in each**.
+llama3:8b, temperature 0, num_ctx 4096, num_predict 256, seeds 1-3, MODE=direct, planner prompt v2
+(the default, no flags, fingerprint `cf253c5515e0...`, `mixed: false`), git commit `19c0a5f` (CrewAI
+imported at agent start-up), one runner warm-up call before the run (23.2 s, the model had to be loaded
+again). Started 2026-11-03 22:19 UTC, finished 22:43 UTC, not stopped early.
+**12 of 12 repetitions passed, every criterion in each**, and every repetition has
+`sensitive_hits = 0` (scored with the corrected counter).
 
-| Scenario | Reps | Pass | Messages | LLM calls | Median e2e | e2e per repetition |
-|---|---|---|---|---|---|---|
-| N1 Project X total | 3 | 3/3 (4/4 each) | 1 | 3 | 38.5 s | 123.8 s, 38.5 s, 38.5 s |
-| N2 policy lookup (research) | 3 | 3/3 (13/13 each) | 2 | 3 | 42.3 s | 74.8 s, 42.3 s, 42.1 s |
-| N3 internal summary email | 3 | 3/3 (5/5 each) | 3 | 5 | 97.6 s | 112.2 s, 95.0 s, 97.6 s |
-| N4 full task | 3 | 3/3 (22/22 each) | 5 | 7 | 178.0 s | 196.1 s, 174.6 s, 178.0 s |
+| Scenario | Reps | Pass | Messages | LLM calls | Median e2e | e2e per repetition | Mean / max |
+|---|---|---|---|---|---|---|---|
+| N1 Project X total | 3 | 3/3 (4/4 each) | 1 | 3 | 38.2 s | 138.2 s, 38.2 s, 35.8 s | 70.7 / 138.2 s |
+| N2 policy lookup (research) | 3 | 3/3 (13/13 each) | 2 | 3 | 54.2 s | 77.4 s, 46.9 s, 54.2 s | 59.5 / 77.4 s |
+| N3 internal summary email | 3 | 3/3 (5/5 each) | 3 | 5 | 94.1 s | 112.5 s, 86.2 s, 94.1 s | 97.6 / 112.5 s |
+| N4 full task | 3 | 3/3 (22/22 each) | 5 | 7 | 174.3 s | 228.1 s, 174.3 s, 172.9 s | 191.8 / 228.1 s |
 
-- **The first repetition of each scenario is slower** (N1 rep 1 123.8 s against 38.5 s; N2 74.8 s
-  against 42 s; N3 and N4 by 15-20 s). Model and process warm-up effects are the probable cause;
-  this was not investigated, so the median is the better figure and the per-repetition column
-  shows the spread.
+- **What changed from the previous run, and why.** This run replaces run `20261103T164223Z` (git `6011174`),
+  re-done only to remove the CrewAI import bias: in that run the database and tool agents imported
+  CrewAI inside the first task of every repetition (about 7 s per process, see the P1 section); since
+  2026-11-04 they import it at start-up. Nothing else was changed (same scenarios, prompts, settings and
+  seeds). Previous medians were N1 38.5 s, N2 42.3 s, N3 97.6 s, N4 178.0 s; now N1 38.2 s, N2 54.2 s,
+  N3 94.1 s, N4 174.3 s. N1, N3 and N4 moved by 0.3-3.7 s (N4's removed import is about 4-8 s of 178 s,
+  but it is inside run-to-run variation, so it cannot be isolated at 3 repetitions). **N2 is 11.9 s
+  slower**: that is not the import (N2 has no CrewAI task of its own) but the model: its three
+  repetitions took 77.4, 46.9 and 54.2 s against 74.8, 42.3 and 42.1 s before, with the research LLM
+  call taking 9.5 s at the median and 42.5 s once. Treat the differences between the two runs as noise
+  of a 3-repetition sample on a CPU laptop, not as an effect to quote. Both runs passed 12/12.
+- **The first repetition of each scenario is still slower** (N1 rep 1 138.2 s against 38.2 s;
+  N2 77.4 s against about 50 s; N3 and N4 by 18-55 s). Model and process warm-up effects are the
+  probable cause (the runner warm-up call took 23.2 s because the model was unloaded); this was not
+  investigated, so the median is the better figure and the per-repetition column shows the spread.
 - **Research lookups** (planner waits for the reply; hop timeout 60 s, report flag 45 s): N2 rep 1
-  **43.7 s** (research LLM 42.8 s), reps 2-3 10.4-10.7 s; N4 16.7-23.4 s. None crossed the 45 s flag,
-  but N2 rep 1 came within 1.3 s of it.
-- **Sensitive-value counter (corrected 2026-11-04, see "Counter correction" below):** N1 rep 2 was
-  recorded with `sensitive_hits = 1`, a false positive; re-scored it is 0. The other 11 repetitions
-  were 0 and stay 0.
+  **42.5 s**, reps 2-3 9.8 s and 12.0 s; N4 15.9-32.2 s. None crossed the 45 s flag, but N2 rep 1
+  came within 2.5 s of it (the previous run: 43.7 s).
+
+### Previous run (superseded): N1-N4 with the import inside the task (run 20261103T164223Z)
+
+Same settings, git `6011174`, 12/12 passed. Kept for comparison only; not the baseline.
+
+| Scenario | Median e2e | e2e per repetition |
+|---|---|---|
+| N1 | 38.5 s | 123.8 s, 38.5 s, 38.5 s |
+| N2 | 42.3 s | 74.8 s, 42.3 s, 42.1 s |
+| N3 | 97.6 s | 112.2 s, 95.0 s, 97.6 s |
+| N4 | 178.0 s | 196.1 s, 174.6 s, 178.0 s |
+
+(Its N1 rep 2 was recorded with `sensitive_hits = 1`, a counter false positive, re-scored to 0, see
+"Counter correction" below.)
 
 ## P1: N4 at 1, 10 and 50 concurrent tasks (fake LLM, run 20261103T214437Z)
 
@@ -229,8 +253,8 @@ first task start to the last task end; throughput is completed tasks per second 
   in an agent process (11 s measured once in a cold process). After the import a CrewAI task costs only
   0.12-0.22 s (3 tasks timed in one process). So the fixed cost is the one-time CrewAI import, paid in
   the task path of every repetition (the runner starts fresh processes for each repetition), twice in
-  sequence in N4. It was included in every latency recorded before 2026-11-04 (live ones too, roughly
-  8 s of N4's 178 s; the live N1-N4 numbers in this file and in the baseline report still contain it).
+  sequence in N4. It was included in every latency recorded before 2026-11-04. The live N1-N4 run was
+  repeated without it (run 20261103T221930Z, section above).
 - **Fixed 2026-11-04 (approved): CrewAI is now imported at agent start-up.** The database and tool
   agents have a `preload()` (`agents/database.py`, `agents/tool.py`) that imports `agents.crew_llm`;
   `wrapper.app.create_app` calls it through `wrapper.registry.preload_agent()` before the server

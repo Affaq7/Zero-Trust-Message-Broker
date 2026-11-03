@@ -83,7 +83,7 @@ section 4.
 ## 2. Applicability in MODE=direct (baseline)
 
 **Status on 2026-11-03 (details and numbers in `docs/baseline-report.md`):** measured: N1, N2, N3, N4 (live,
-run `20261103T164223Z`, 12/12 passed) and P1 (fake LLM, run `20261103T214437Z`); not applicable in direct
+run `20261103T221930Z`, 12/12 passed) and P1 (fake LLM, run `20261103T214437Z`); not applicable in direct
 mode: A9, A10, A11, A12, A14; **defined but not executed, pending the scripted attacker sender: A1, A2, A3,
 A4, A5, A6, A7, A8, A13.** "Applicable" in the table below means the scenario can be run in direct mode,
 not that it has been; no attack outcome has been measured.
