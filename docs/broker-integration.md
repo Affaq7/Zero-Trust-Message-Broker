@@ -302,3 +302,22 @@ the mailer (it normalises the recipient lists and always states `cc` and
   `planner.request` yet, so no scenario uses those two actions so far.
 - Direct mode still checks none of it; payload validation against these
   schemas is the broker's job.
+
+## 9. Plug-in checklist and where the baseline is (2026-11-03)
+
+How to switch `MODE`, what to run to reproduce the baseline and where the results go are in
+`docs/README.md`; the baseline itself (all 19 scenarios, with the expected decision of each) is in
+`docs/baseline-report.md`. In short:
+
+1. `MODE=broker` is one environment variable per agent process, read once at start. Today the wrapper
+   answers HTTP 501 (`wrapper/app.py`) and `send_message()` raises `BrokerModeNotImplementedError`
+   (`wrapper/send.py`); those two branches are where the broker goes.
+2. The scenario runner starts every process with `MODE=direct` (`runner/processes.py`) and has no
+   `--mode` option. It needs the mode and the broker address passed through once Q26 (how an agent
+   reaches the broker) is decided.
+3. Compare against `results\<run_id>\` of the baseline runs: N1-N4 live (run `20261103T164223Z`, 12/12
+   passed) and P1 (run `20261103T175957Z`, fake LLM). The planner prompt (v2) and the research prompt
+   are frozen, so the same scenarios give comparable runs; a broker run should use the same planner
+   prompt version.
+4. Direct mode has no attack results to compare with: A9, A10, A11, A12 and A14 are not applicable
+   there, and A1-A8 and A13 are defined but not executed (a scripted attacker sender is not built).

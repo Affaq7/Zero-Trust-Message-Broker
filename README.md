@@ -288,7 +288,7 @@ warm-ups), `results.csv` (one row per task), `criteria.jsonl` (every success
 check and the final answer), `events.jsonl`, `ground_truth.jsonl` and
 `summary.csv`. All processes are stopped afterwards, also after Ctrl+C.
 
-Encoded so far (9 of the 19 scenarios, in `scenarios\`):
+Encoded so far (10 of the 19 scenarios, in `scenarios\`):
 
 | Scenario | What | In direct mode |
 |---|---|---|
@@ -296,9 +296,10 @@ Encoded so far (9 of the 19 scenarios, in `scenarios\`):
 | **N2** | planner asks research what the HR policy says about emailing payroll exports (planner, research, tool; 2 messages) | runs (live 3/3, planner prompt v2) |
 | **N3** | planner emails an internal summary to one colleague (planner, database, tool and mailer processes; 3 messages) | runs (planner prompt v1) |
 | **N4** | full task: look up the Q3 market update (research), get the Project X total (database), email a summary (tool, mailer); 5 messages | runs (live 3/3, planner prompt v2) |
+| **P1** | N4 at 1, 10 and 50 concurrent tasks (fake LLM only; latency, throughput) | runs (`runner` records p50/p95, wall time, throughput per level) |
 | **A9, A10, A11, A12, A14** | attacks that need the broker or a token check | **not applicable**: recorded as `not_applicable` with the reason, never run, left out of every rate |
 
-The other 10 are not built yet; see [Known limits](#known-limits-of-the-testbed).
+The other 9 (A1-A8, A13) are defined but not executed: they need a scripted attacker sender that is not built; see [Known limits](#known-limits-of-the-testbed).
 No scenario file sets a planner prompt: all use the default, v2. A final baseline
 run must use one planner prompt version for all scenarios (`--planner-prompt`).
 Run from the repo root:
@@ -414,6 +415,8 @@ Use `curl.exe`, not `curl`. In Windows PowerShell `curl` is an alias for
 |---|---|
 | `docs/open-questions.md` | every contract and design question, with its status (decided, provisional, open) and who must confirm it |
 | `docs/scenario-coverage.md` | message paths for all 19 scenarios, which ones apply in direct mode, entitled parties, the four gaps (G1-G4) and the contract changes proposed for the teammates (mostly made since: see S10-S17 in `docs/open-questions.md`) |
+| `docs/README.md` | index of the docs and the broker hand-over: switching MODE, reproducing the baseline, where results go |
+| `docs/baseline-report.md` | the direct-mode baseline: all 19 scenarios with status, expected decision and measured numbers |
 | `docs/broker-integration.md` | for the broker developer: where the broker sits, what `MODE=broker` does today, envelopes, headers, what the testbed expects back, and what is still open |
 | `docs/agents-and-roles.md` | which agents exist, their roles, what each may call and serve |
 | `docs/measurements.md` | timings, live N1-N4 results, the frozen planner (v2) and research prompt hashes, the historical v1 hash, warm-call measurements |
@@ -449,16 +452,15 @@ Use `curl.exe`, not `curl`. In Windows PowerShell `curl` is an alias for
 - **A final baseline run uses one planner prompt version for every scenario**
   (the default, v2); `--planner-prompt v1` is kept to reproduce the historical
   run, and a run that mixes versions is flagged.
-- **9 of 19 scenarios are encoded.** N1, N2, N3 and N4 run. **A9, A10, A11, A12 and
+- **10 of 19 scenarios are encoded.** N1, N2, N3, N4 and P1 run. **A9, A10, A11, A12 and
   A14 are not applicable in direct mode** (they need the broker's denials,
   quarantine, encrypted link or network isolation, or a token/proof check that
   direct mode does not have); they are recorded and left out of every rate.
   A13 *is* applicable in direct mode but not built yet.
-- **10 scenarios are not built yet**, for these reasons:
+- **9 scenarios are not built yet** (no attack has been executed; the baseline has no attack result), for these reasons:
 
   | Not built | Why |
   |---|---|
-  | P1 | repeats N4 with 1, 10 and 50 tasks at once (N4 itself is built) |
   | A1, A5, A8, A13 | the requester is the research agent (not built), or an agent acting under another agent's identity (not built); A8's target is still undecided (Q-S2) |
   | A2, A4, A6, A7 | need an agent that misbehaves in a defined way or acts under another agent's identity (not built); A7 also needs the planner to handle `planner.request` (the action exists, the handler does not); the broker side of A4 now has its message (the tool agent sends `mail.deliver` to the mailer agent, both built), what is missing is the misbehaving tool agent |
   | A3 | needs only the existing agents; not built yet |
