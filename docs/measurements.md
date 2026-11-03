@@ -182,7 +182,7 @@ early. **12 of 12 repetitions passed, every criterion in each**.
   recorded with `sensitive_hits = 1`, a false positive; re-scored it is 0. The other 11 repetitions
   were 0 and stay 0.
 
-## P1: N4 at 1, 10 and 50 concurrent tasks (fake LLM, run 20261103T175957Z)
+## P1: N4 at 1, 10 and 50 concurrent tasks (fake LLM, run 20261103T214437Z)
 
 `python -m runner --scenario P1 --reps 1` (scenario `scenarios/p1.json`: N4's task, agents and criteria,
 `concurrency` 1, 10, 50). **Fake LLM only**: replies are scripted by prompt text and take no time, so
@@ -193,9 +193,21 @@ Each task is N4's five messages (planner -> research -> tool, planner -> databas
 
 | Concurrent tasks | Tasks completed | Task criteria met | p50 latency | p95 latency | Messages per task | Wall time | Throughput |
 |---|---|---|---|---|---|---|---|
-| 1 | 1/1 | 1/1 | 9.5 s | 9.5 s | 5 | 9.5 s | 0.106 tasks/s |
-| 10 | 10/10 | 10/10 | 14.6 s | 15.4 s | 5 | 15.4 s | 0.647 tasks/s |
-| 50 | 50/50 | 50/50 (recorded 49/50, corrected, see below) | 39.1 s | 42.1 s | 5 | 44.7 s | 1.120 tasks/s |
+| 1 | 1/1 | 1/1 | 2.3 s | 2.3 s | 5 | 2.3 s | 0.437 tasks/s |
+| 10 | 10/10 | 10/10 | 6.4 s | 7.2 s | 5 | 7.2 s | 1.392 tasks/s |
+| 50 | 50/50 | 50/50 | 27.7 s | 31.7 s | 5 | 32.2 s | 1.551 tasks/s |
+
+**These are the current numbers: run `20261103T214437Z` (2026-11-04, git `02b9110` plus the start-up
+import change), CrewAI imported at agent start-up.** The first measurement, run `20261103T175957Z`
+(CrewAI imported lazily inside the first task), is kept below for comparison and is superseded:
+
+| Concurrent tasks | p50 | p95 | Wall time | Throughput |
+|---|---|---|---|---|
+| 1 | 9.5 s | 9.5 s | 9.5 s | 0.106 tasks/s |
+| 10 | 14.6 s | 15.4 s | 15.4 s | 0.647 tasks/s |
+| 50 | 39.1 s | 42.1 s | 44.7 s | 1.120 tasks/s |
+
+(That run's c50 criteria were recorded 49/50, corrected to 50/50 after the counter fix, see below.)
 
 (p95 is the nearest-rank percentile of the completed tasks' end-to-end latency; wall time is the
 first task start to the last task end; throughput is completed tasks per second of wall time.)
@@ -217,16 +229,23 @@ first task start to the last task end; throughput is completed tasks per second 
   in an agent process (11 s measured once in a cold process). After the import a CrewAI task costs only
   0.12-0.22 s (3 tasks timed in one process). So the fixed cost is the one-time CrewAI import, paid in
   the task path of every repetition (the runner starts fresh processes for each repetition), twice in
-  sequence in N4. It is included in every latency in this file (live ones too, roughly 8 s of N4's
-  178 s); it is not a property of the broker comparison but it does inflate small-task latency.
-  Avoiding it would mean importing CrewAI when an agent process starts, a change to agent code that
-  has not been made (it needs approval).
-- **Compare 10 and 50 concurrent tasks for overhead trends, not 1 and 50.** The 1-task time (9.5 s)
-  includes the one-time CrewAI import (above), which a single task pays in full and which 10 and 50
-  tasks mostly share. From 10 to 50 tasks (5x the tasks): p50 14.6 -> 39.1 s (2.7x), p95 15.4 -> 42.1 s
-  (2.7x), wall time 15.4 -> 44.7 s (2.9x), throughput 0.647 -> 1.120 tasks/s (1.7x), with every task
-  completing. That is sub-linear in latency and throughput, so the testbed is not the bottleneck
-  before the real model is, but it is no longer free at 50 tasks (it queues).
+  sequence in N4. It was included in every latency recorded before 2026-11-04 (live ones too, roughly
+  8 s of N4's 178 s; the live N1-N4 numbers in this file and in the baseline report still contain it).
+- **Fixed 2026-11-04 (approved): CrewAI is now imported at agent start-up.** The database and tool
+  agents have a `preload()` (`agents/database.py`, `agents/tool.py`) that imports `agents.crew_llm`;
+  `wrapper.app.create_app` calls it through `wrapper.registry.preload_agent()` before the server
+  starts listening, so the runner's wait for `/health` covers the import and it is no longer inside
+  any timed task. No agent logic changed; the planner, research and mailer have no preload. Test:
+  `tests/test_wrapper/test_preload.py`. Effect on P1 (table above, previous run below it): the
+  1-task time fell from 9.5 s to 2.3 s, so the import was about 7 s of it. The remaining 2.3 s is real
+  per-task overhead (HTTP hops, mock services, logging, first calls in warm processes).
+- **Overhead trend, 10 -> 50 concurrent tasks (5x the tasks), current run:** p50 6.4 -> 27.7 s (4.3x),
+  p95 7.2 -> 31.7 s (4.4x), wall time 7.2 -> 32.2 s (4.5x), throughput 1.392 -> 1.551 tasks/s (1.1x),
+  every task completing. Latency now grows almost linearly with load and throughput is nearly flat,
+  i.e. the testbed saturates at about 1.5 tasks/s on this laptop and extra tasks queue. (The earlier
+  run's trend, 14.6 -> 39.1 s and 0.647 -> 1.120 tasks/s, looked more sub-linear only because the
+  import cost sat in the fixed part of every latency.) The 1-task time no longer contains the import
+  and can be compared directly. One repetition per level, so treat the figures as indicative.
 - A live (llama3:8b) P1 was not run: a single CPU-bound model serves one request at a time, so live
   latency at 10 and 50 tasks would be dominated by queueing for the model.
 - The broker-mode half of P1 is not run (no broker yet); this is the direct-mode baseline to compare

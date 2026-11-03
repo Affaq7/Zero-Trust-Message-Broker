@@ -16,7 +16,7 @@ Numbers come from two runs (reports made with `python -m runner.report 20261103T
 | Run | What | Settings |
 |---|---|---|
 | `20261103T164223Z` | N1-N4, 3 repetitions each, **live llama3:8b** | temperature 0, num_ctx 4096, num_predict 256, seeds 1-3, planner prompt v2 (default, fingerprint `cf253c5515e0...`), git `6011174`, MODE=direct |
-| `20261103T175957Z` | P1 (N4 at 1, 10, 50 concurrent tasks), **fake LLM**, 1 repetition per level | MODE=direct, git `d1b29e0` |
+| `20261103T214437Z` | P1 (N4 at 1, 10, 50 concurrent tasks), **fake LLM**, 1 repetition per level | MODE=direct, git `02b9110` + CrewAI preload at agent start-up (supersedes `20261103T175957Z`, git `d1b29e0`, lazy import) |
 
 ## 1. Summary
 
@@ -74,20 +74,22 @@ In direct mode the false-positive rate of these four normal scenarios is not a b
 blocks anything, so all four complete. They are the **reference for the task-success rate and the
 latency** the broker will be compared with.
 
-## 4. Performance P1 (N4 at 1, 10, 50 concurrent tasks, fake LLM, run 20261103T175957Z)
+## 4. Performance P1 (N4 at 1, 10, 50 concurrent tasks, fake LLM, run 20261103T214437Z)
 
 Fake LLM replies take no time, so this measures the testbed (processes, HTTP hops, mock services,
 logging), not the model. One repetition per level.
 
 | Concurrent tasks | Tasks completed | Task criteria met | p50 | p95 | Messages per task | Wall time | Throughput |
 |---|---|---|---|---|---|---|---|
-| 1 | 1/1 | 1/1 | 9.5 s | 9.5 s | 5 | 9.5 s | 0.106 tasks/s |
-| 10 | 10/10 | 10/10 | 14.6 s | 15.4 s | 5 | 15.4 s | 0.647 tasks/s |
-| 50 | 50/50 | 50/50 (49/50 as first recorded, see section 5) | 39.1 s | 42.1 s | 5 | 44.7 s | 1.120 tasks/s |
+| 1 | 1/1 | 1/1 | 2.3 s | 2.3 s | 5 | 2.3 s | 0.437 tasks/s |
+| 10 | 10/10 | 10/10 | 6.4 s | 7.2 s | 5 | 7.2 s | 1.392 tasks/s |
+| 50 | 50/50 | 50/50 | 27.7 s | 31.7 s | 5 | 32.2 s | 1.551 tasks/s |
 
-The 1-task time includes the one-time CrewAI import in two agents (see `docs\measurements.md`), so compare
-10 and 50 concurrent tasks for overhead trends: p50 14.6 -> 39.1 s and throughput 0.647 -> 1.120 tasks/s
-for 5x the tasks.
+These figures are from the re-run `20261103T214437Z` (2026-11-04), after CrewAI was moved to agent
+start-up (database and tool agents), so the one-time import is no longer inside the first task. The
+earlier run `20261103T175957Z` (import inside the task: 9.5 s, 14.6 s and 39.1 s p50; 0.106, 0.647 and
+1.120 tasks/s) is superseded; its numbers and the explanation are in `docs\measurements.md`. From 10 to
+50 tasks p50 grows 4.3x and throughput only 1.1x: the testbed saturates at about 1.5 tasks/s.
 
 The broker-mode half of P1 (same levels with the broker in the path) cannot be run yet.
 
@@ -98,6 +100,9 @@ The broker-mode half of P1 (same levels with the broker in the path) cannot be r
   CPU-only laptop.
 - **First repetition of each scenario is slower** (N1 rep 1 123.8 s against 38.5 s). Probable
   warm-up effects; not investigated. Prefer the median.
+- **The live N1-N4 numbers were measured before the CrewAI start-up preload** (run `20261103T164223Z`),
+  so they still include the one-time CrewAI import (about 7 s per CrewAI agent process, roughly 8 s of
+  N4's 178 s). P1 was re-run after the change. Re-running N1-N4 live would remove it; not done.
 - **Research lookup times (live):** N2 rep 1 took 43.7 s, 1.3 s under the report's 45 s flag; the
   planner gives up on a reply after 60 s. Other lookups took 10-23 s.
 - **Sensitive-value counter corrected (2026-11-04).** Two tasks were first recorded with a sensitive hit

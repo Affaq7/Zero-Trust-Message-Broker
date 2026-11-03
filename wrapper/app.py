@@ -29,7 +29,7 @@ from contracts.envelope import IdStr, new_id
 from contracts.payloads import ResponsePayload
 from wrapper.config import Settings
 from wrapper.message_log import MessageLog
-from wrapper.registry import get_agent, get_task_handler
+from wrapper.registry import get_agent, get_task_handler, preload_agent
 from wrapper.runtime import AgentRuntime, run_with_runtime
 
 log = logging.getLogger(__name__)
@@ -55,6 +55,7 @@ def _role_for(settings: Settings) -> str | None:
 def create_app(settings: Settings) -> FastAPI:
     agent = get_agent(settings.impl)  # unknown implementation fails at startup
     task_handler = get_task_handler(settings.impl)
+    preload_agent(settings.impl)  # slow imports happen before the server accepts requests
     runtime = AgentRuntime.create(settings.agent_name, _role_for(settings))
     message_log = MessageLog(settings.log_dir, settings.agent_name)
     app = FastAPI(title=f"agent wrapper ({settings.agent_name})")

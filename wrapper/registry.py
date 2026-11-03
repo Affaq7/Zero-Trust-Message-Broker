@@ -1,5 +1,7 @@
 """Maps the agent implementation name (AGENT_IMPL, default AGENT_NAME) to its code."""
 
+from collections.abc import Callable
+
 from agents import database, dummy, mailer, planner, research, tool
 from agents.base import AgentFn, TaskFn
 from wrapper.config import ConfigError
@@ -19,6 +21,19 @@ TASKS: dict[str, TaskFn] = {
     "dummy": dummy.run_task,
     "planner": planner.run_task,
 }
+
+
+# Start-up hooks: heavy imports an agent would otherwise pay for inside its first task.
+PRELOADS: dict[str, Callable[[], None]] = {
+    "tool": tool.preload,
+    "database": database.preload,
+}
+
+
+def preload_agent(name: str) -> None:
+    hook = PRELOADS.get(name)
+    if hook:
+        hook()
 
 
 def get_agent(name: str) -> AgentFn:

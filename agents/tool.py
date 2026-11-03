@@ -127,6 +127,11 @@ class ToolAgent:
         return send_message(token=rt.token_for(kwargs["receiver"]), **kwargs)
 
 
+def preload() -> None:
+    """Import CrewAI at process start-up so the first task does not pay for it."""
+    import agents.crew_llm  # noqa: F401
+
+
 _default: ToolAgent | None = None
 _lock = threading.Lock()
 

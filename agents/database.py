@@ -68,6 +68,11 @@ class DatabaseAgent:
         return draft.summary
 
 
+def preload() -> None:
+    """Import CrewAI at process start-up so the first task does not pay for it."""
+    import agents.crew_llm  # noqa: F401
+
+
 _default: DatabaseAgent | None = None
 _lock = threading.Lock()
 

@@ -317,7 +317,7 @@ How to switch `MODE`, what to run to reproduce the baseline and where the result
    `BrokerModeNotImplementedError` above); the broker address still has to be passed through once Q26
    (how an agent reaches the broker) is decided.
 3. Compare against `results\<run_id>\` of the baseline runs: N1-N4 live (run `20261103T164223Z`, 12/12
-   passed) and P1 (run `20261103T175957Z`, fake LLM). The planner prompt (v2) and the research prompt
+   passed) and P1 (run `20261103T214437Z`, fake LLM). The planner prompt (v2) and the research prompt
    are frozen, so the same scenarios give comparable runs; a broker run should use the same planner
    prompt version.
 4. Direct mode has no attack results to compare with: A9, A10, A11, A12 and A14 are not applicable
