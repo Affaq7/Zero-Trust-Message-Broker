@@ -36,7 +36,8 @@ COLUMNS = [
     "not_applicable_reason", "error",
 ]
 SUMMARY_COLUMNS = ["scenario_id", "category", "concurrency", "runs", "completed", "task_completed",
-                   "attack_succeeded", "median_latency_ms", "mean_latency_ms", "max_latency_ms"]
+                   "attack_succeeded", "median_latency_ms", "mean_latency_ms", "max_latency_ms",
+                   "p95_latency_ms", "median_messages", "wall_time_s", "throughput_per_s"]
 
 
 def _now() -> str:
@@ -74,6 +75,41 @@ def scenario_checksum(s: Scenario) -> str:
 
 def _ts(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def percentile(values: list[float], q: float) -> float:
+    """Nearest-rank percentile (q in 0-100) of a non-empty list."""
+    ordered = sorted(values)
+    rank = max(1, -(-len(ordered) * q // 100))          # ceil(n * q / 100)
+    return ordered[int(rank) - 1]
+
+
+def level_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Numbers for the rows of one scenario at one concurrency level: tasks, completed, latency
+    p50/p95/mean/max of completed tasks, messages per task, wall time (per repetition: first task
+    start to last task end; summed over repetitions) and throughput (completed tasks per second
+    of wall time)."""
+    done = [r for r in rows if r["status"] == "completed"]
+    lat = [r["e2e_latency_ms"] for r in done]
+    walls = []
+    for rep in sorted({r["rep"] for r in rows}):
+        group = [r for r in rows if r["rep"] == rep and r.get("started_at") and r.get("ended_at")]
+        if group:
+            walls.append((max(_ts(r["ended_at"]) for r in group) - min(_ts(r["started_at"]) for r in group))
+                         .total_seconds())
+    wall = sum(walls)
+    msgs = [r["messages"] for r in rows if r["messages"] is not None]
+    return {
+        "tasks": len(rows), "completed": len(done),
+        "task_completed": sum(1 for r in rows if r["task_completed"]),
+        "p50_ms": round(statistics.median(lat)) if lat else None,
+        "p95_ms": round(percentile(lat, 95)) if lat else None,
+        "mean_ms": round(statistics.fmean(lat)) if lat else None,
+        "max_ms": max(lat) if lat else None,
+        "median_messages": statistics.median(msgs) if msgs else None,
+        "wall_s": round(wall, 1) if walls else None,
+        "throughput_per_s": round(len(done) / wall, 3) if wall else None,
+    }
 
 
 def lookup_durations_ms(envelopes: list[dict]) -> list[int]:
@@ -264,6 +300,7 @@ class ResultsWriter:
             w.writeheader()
             for (sid, cat, conc), rows in sorted(groups.items()):
                 lat = [r["e2e_latency_ms"] for r in rows if r["status"] == "completed"]
+                stats = level_stats(rows)
 
                 def rate(key):
                     vals = [r[key] for r in rows if r[key] is not None]
@@ -276,4 +313,8 @@ class ResultsWriter:
                     "median_latency_ms": round(statistics.median(lat)) if lat else "",
                     "mean_latency_ms": round(statistics.fmean(lat)) if lat else "",
                     "max_latency_ms": max(lat) if lat else "",
+                    "p95_latency_ms": stats["p95_ms"] if stats["p95_ms"] is not None else "",
+                    "median_messages": stats["median_messages"] if stats["median_messages"] is not None else "",
+                    "wall_time_s": stats["wall_s"] if stats["wall_s"] is not None else "",
+                    "throughput_per_s": stats["throughput_per_s"] if stats["throughput_per_s"] is not None else "",
                 })

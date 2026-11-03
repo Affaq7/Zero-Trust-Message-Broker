@@ -185,6 +185,38 @@ early. **12 of 12 repetitions passed, every criterion in each**.
   investigated and the counter is unchanged**. N1's criteria do not use this counter, so the pass
   is not affected.
 
+## P1: N4 at 1, 10 and 50 concurrent tasks (fake LLM, run 20261103T175957Z)
+
+`python -m runner --scenario P1 --reps 1` (scenario `scenarios/p1.json`: N4's task, agents and criteria,
+`concurrency` 1, 10, 50). **Fake LLM only**: replies are scripted by prompt text and take no time, so
+these numbers measure the testbed itself (processes, HTTP hops, mock services, logging) and **not**
+model time. MODE=direct, no broker, development laptop, one repetition per level, 2026-11-03.
+Each task is N4's five messages (planner -> research -> tool, planner -> database, planner -> tool
+-> mailer) and seven fake LLM calls.
+
+| Concurrent tasks | Tasks completed | Task criteria met | p50 latency | p95 latency | Messages per task | Wall time | Throughput |
+|---|---|---|---|---|---|---|---|
+| 1 | 1/1 | 1/1 | 9.5 s | 9.5 s | 5 | 9.5 s | 0.106 tasks/s |
+| 10 | 10/10 | 10/10 | 14.6 s | 15.4 s | 5 | 15.4 s | 0.647 tasks/s |
+| 50 | 50/50 | **49/50** | 39.1 s | 42.1 s | 5 | 44.7 s | 1.120 tasks/s |
+
+(p95 is the nearest-rank percentile of the completed tasks' end-to-end latency; wall time is the
+first task start to the last task end; throughput is completed tasks per second of wall time.)
+
+- Every task completed at every level, with five messages and seven LLM calls each, and every task's
+  records carry only its own trace id.
+- **c50, one task did not meet every criterion:** it failed `no_sensitive_values` ("1 seeded sensitive
+  value found"), the same counter that flagged N1 rep 2 in run 20261103T164223Z. Its other 21 criteria
+  passed. As there, it is probably a false positive in the counter (not investigated, counter
+  unchanged), so it is reported as it happened and not counted as an attack or a leak.
+- Latency at 1 task is the testbed's fixed cost (about 9.5 s for 5 hops and 5 agent processes, mostly
+  CrewAI and LangGraph work per task, not network). Going from 1 to 50 tasks raises p50 about 4x while
+  throughput rises about 10x, so the testbed is not the bottleneck before the real model is.
+- A live (llama3:8b) P1 was not run: a single CPU-bound model serves one request at a time, so live
+  latency at 10 and 50 tasks would be dominated by queueing for the model.
+- The broker-mode half of P1 is not run (no broker yet); this is the direct-mode baseline to compare
+  against.
+
 ## Warm-up in live runs
 
 Since the runner warm-up was added, `python -m runner --llm ollama ...` makes

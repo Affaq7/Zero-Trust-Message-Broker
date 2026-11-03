@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from runner.results import _row_from_csv
+from runner.results import _row_from_csv, level_stats
 from runner.scenarios import REPO_ROOT
 
 DEFAULT_RESULTS_DIR = REPO_ROOT / "results"
@@ -161,6 +161,24 @@ def lookup_lines(runs: list[tuple[str, dict, list]]) -> list[str]:
     return lines + [""] + (flags or [f"No lookup took longer than {limit_s} s."])
 
 
+def performance_lines(runs: list[tuple[str, dict, list]]) -> list[str]:
+    """Per-concurrency-level table for performance scenarios (P1)."""
+    rows = [r for _, _, rs in runs for r in rs if r["category"] == "performance" and r["status"] != "not_applicable"]
+    if not rows:
+        return []
+    lines = ["", "## Performance (concurrency levels)", "",
+             "| Scenario | Concurrent tasks | Tasks completed | Task criteria met | p50 latency | p95 latency | "
+             "Messages per task | Wall time | Throughput |", "|---|---|---|---|---|---|---|---|---|"]
+    for sid in sorted({r["scenario_id"] for r in rows}):
+        for level in sorted({r["concurrency"] for r in rows if r["scenario_id"] == sid}):
+            s = level_stats([r for r in rows if r["scenario_id"] == sid and r["concurrency"] == level])
+            thr = f"{s['throughput_per_s']:.3f} tasks/s" if s["throughput_per_s"] is not None else "-"
+            wall = f"{s['wall_s']:.1f} s" if s["wall_s"] is not None else "-"
+            lines.append(f"| {sid} | {level} | {s['completed']}/{s['tasks']} | {s['task_completed']}/{s['tasks']} | "
+                         f"{_ms(s['p50_ms'])} | {_ms(s['p95_ms'])} | {_fmt(s['median_messages'])} | {wall} | {thr} |")
+    return lines
+
+
 def render_md(title: str, runs: list[tuple[str, dict, list]], table: list[dict]) -> str:
     lines = [f"# {title}", "", f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} "
              "by `python -m runner.report`.", "", "## Runs", ""]
@@ -184,8 +202,8 @@ def render_md(title: str, runs: list[tuple[str, dict, list]], table: list[dict])
               "| Scenario | Category | Runs | Task completed | Median / mean / max latency | "
               "Median LLM calls | Median messages |", "|---|---|---|---|---|---|---|"]
     for t in table:
-        if t["baseline"] == "not_applicable":
-            continue
+        if t["baseline"] == "not_applicable" or t["category"] == "performance":
+            continue                                     # performance rows: see the concurrency table below
         rate = f"{t['task_completed']} ({t['task_completed_rate']:.0%})" if t["task_completed"] else "-"
         lines.append(f"| {t['scenario_id']} | {t['category']} | {t['runs']} | {rate} | "
                      f"{_ms(t['median_latency_ms'])} / {_ms(t['mean_latency_ms'])} / {_ms(t['max_latency_ms'])} | "
@@ -194,7 +212,7 @@ def render_md(title: str, runs: list[tuple[str, dict, list]], table: list[dict])
     lines += ["", "## Not applicable in direct mode", ""]
     lines += [f"- **{t['scenario_id']}**: {t['not_applicable_reason']}" for t in na] or ["- none"]
     lines += ["", "Not-applicable scenarios are excluded from every rate. Latency counts completed runs only."]
-    lines += lookup_lines(runs) + [""]
+    lines += performance_lines(runs) + lookup_lines(runs) + [""]
     return "\n".join(lines)
 
 

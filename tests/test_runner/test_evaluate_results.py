@@ -156,7 +156,9 @@ def test_writer_files_and_columns(tmp_path):
     summary = read_csv(w.dir / "summary.csv")
     assert summary == [{"scenario_id": "X1", "category": "normal", "concurrency": "1", "runs": "1",
                         "completed": "1", "task_completed": "1/1", "attack_succeeded": "",
-                        "median_latency_ms": "5000", "mean_latency_ms": "5000", "max_latency_ms": "5000"}]
+                        "median_latency_ms": "5000", "mean_latency_ms": "5000", "max_latency_ms": "5000",
+                        "p95_latency_ms": "5000", "median_messages": "1", "wall_time_s": "5.0",
+                        "throughput_per_s": "0.2"}]
 
 
 def test_failed_criteria_are_named(tmp_path):

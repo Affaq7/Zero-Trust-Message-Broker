@@ -97,7 +97,7 @@ def run_repetition(scenario: Scenario, rep: int, run_dir: Path, *, concurrency: 
     rep_dir = rep_dir_for(run_dir, scenario.id, concurrency, rep)
     config = TestbedConfig(
         agents=[a.model_dump() for a in scenario.agents], run_dir=rep_dir, seed=rep,
-        llm_backend=llm_backend, fake_llm=scenario.fake_llm, llm_base_url=llm_base_url,
+        llm_backend=llm_backend, fake_llm=scenario.model_dump(mode="json")["fake_llm"], llm_base_url=llm_base_url,
         debug_prompts=debug_prompts, planner_prompt=planner_prompt or scenario.planner_prompt or "")
     log_dir = rep_dir / "logs"
 

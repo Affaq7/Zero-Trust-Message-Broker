@@ -21,7 +21,7 @@ NOT_APPLICABLE = ["A10", "A11", "A12", "A14", "A9"]
 
 
 def test_encoded_set(scenarios):
-    assert sorted(scenarios) == sorted(["N1", "N2", "N3", "N4", *NOT_APPLICABLE])
+    assert sorted(scenarios) == sorted(["N1", "N2", "N3", "N4", "P1", *NOT_APPLICABLE])
     for sid in ("N1", "N2", "N3", "N4"):
         assert scenarios[sid].category == "normal" and scenarios[sid].baseline == "applicable"
 

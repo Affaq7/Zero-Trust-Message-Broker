@@ -152,6 +152,22 @@ Criterion = Annotated[AnswerContains | AnswerNotContains | AnswerContainsNumber 
                       Field(discriminator="type")]
 
 
+class FakeRule(Strict):
+    if_prompt_contains: str = Field(min_length=1)
+    reply: Any
+
+
+class FakeRules(Strict):
+    rules: list[FakeRule] = Field(default_factory=list)
+    default: Any = None
+
+    @model_validator(mode="after")
+    def _something(self) -> "FakeRules":
+        if not self.rules and self.default is None:
+            raise ValueError("fake rules need at least one rule or a default")
+        return self
+
+
 class Scenario(Strict):
     id: Annotated[str, Field(pattern=r"^[A-Z][0-9]{1,2}$")]
     title: str = Field(min_length=1, max_length=200)
@@ -173,7 +189,9 @@ class Scenario(Strict):
     planner_prompt: Literal["v1", "v2"] | None = None
     # Fake-LLM replies per agent: {agent: {purpose: [reply, ...]}}; used only
     # when the run uses LLM_BACKEND=fake.
-    fake_llm: dict[Name, dict[Name, list[Any]]] = Field(default_factory=dict)
+    # A purpose maps to a list (replies consumed in order) or, for concurrent tasks, to rules
+    # {"rules": [{"if_prompt_contains": ..., "reply": ...}], "default": reply} (not consumed).
+    fake_llm: dict[Name, dict[Name, list[Any] | FakeRules]] = Field(default_factory=dict)
     # Waiting for docs/scenario-coverage.md; accepted, may stay empty.
     expected_decision: str | None = None
     entitled_parties: dict[str, Any] | None = None
