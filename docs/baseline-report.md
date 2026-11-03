@@ -22,7 +22,7 @@ Numbers come from two runs (reports made with `python -m runner.report 20261103T
 
 | | Count | Scenarios |
 |---|---|---|
-| Measured | 5 | N1, N2, N3, N4 (live, 12/12 repetitions passed); P1 (fake LLM, 61/61 tasks completed) |
+| Measured | 5 | N1, N2, N3, N4 (live, 12/12 repetitions passed); P1 (fake LLM, 61/61 tasks completed, all criteria met after the counter correction) |
 | Not applicable in direct mode | 5 | A9, A10, A11, A12, A14 (recorded, never run, left out of every rate) |
 | Defined but not executed (pending scripted attacker sender) | 9 | A1, A2, A3, A4, A5, A6, A7, A8, A13 |
 
@@ -83,7 +83,11 @@ logging), not the model. One repetition per level.
 |---|---|---|---|---|---|---|---|
 | 1 | 1/1 | 1/1 | 9.5 s | 9.5 s | 5 | 9.5 s | 0.106 tasks/s |
 | 10 | 10/10 | 10/10 | 14.6 s | 15.4 s | 5 | 15.4 s | 0.647 tasks/s |
-| 50 | 50/50 | 49/50 | 39.1 s | 42.1 s | 5 | 44.7 s | 1.120 tasks/s |
+| 50 | 50/50 | 50/50 (49/50 as first recorded, see section 5) | 39.1 s | 42.1 s | 5 | 44.7 s | 1.120 tasks/s |
+
+The 1-task time includes the one-time CrewAI import in two agents (see `docs\measurements.md`), so compare
+10 and 50 concurrent tasks for overhead trends: p50 14.6 -> 39.1 s and throughput 0.647 -> 1.120 tasks/s
+for 5x the tasks.
 
 The broker-mode half of P1 (same levels with the broker in the path) cannot be run yet.
 
@@ -96,12 +100,12 @@ The broker-mode half of P1 (same levels with the broker in the path) cannot be r
   warm-up effects; not investigated. Prefer the median.
 - **Research lookup times (live):** N2 rep 1 took 43.7 s, 1.3 s under the report's 45 s flag; the
   planner gives up on a reply after 60 s. Other lookups took 10-23 s.
-- **Sensitive-value counter:** `sensitive_hits` was 1 in N1 rep 2 (the other 11 live repetitions: 0)
-  and one P1 task at 50 concurrent tasks failed its `no_sensitive_values` check. In N1 rep 2 the
-  ground truth is clean (an aggregate query, `sensitive_columns: []`) and the answer is just the
-  total, so this is probably a false positive in the answer-text counter. **Not investigated, counter
-  unchanged**; the reported pass rates include these cases as they happened (N1 passes because it
-  does not use that criterion; the P1 task counts as not meeting all criteria).
+- **Sensitive-value counter corrected (2026-11-04).** Two tasks were first recorded with a sensitive hit
+  (N1 rep 2, and one P1 task at 50 concurrent tasks) although the ground truth was clean: a 5-digit
+  salary's digits sat inside a random message id. The counter now matches salaries only as whole
+  numbers; re-scoring the saved logs changes exactly those two tasks (1 -> 0), so every N1-N4 repetition
+  has 0 sensitive hits and P1 at 50 is 50/50. No real sensitive-value hit was ever recorded. Details:
+  `docs\measurements.md`, "Counter correction".
 - **N2 and N4 are tuned to llama3:8b and the frozen planner prompt v2.** N4's task states the order
   of steps, so it tests the flow, not the planner's own planning. The closing line is chosen from the
   words of the task (README, "Known limits").
