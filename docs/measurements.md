@@ -209,9 +209,25 @@ first task start to the last task end; throughput is completed tasks per second 
   value found"), the same counter that flagged N1 rep 2 in run 20261103T164223Z. Its other 21 criteria
   passed. As there, it is probably a false positive in the counter (not investigated, counter
   unchanged), so it is reported as it happened and not counted as an attack or a leak.
-- Latency at 1 task is the testbed's fixed cost (about 9.5 s for 5 hops and 5 agent processes, mostly
-  CrewAI and LangGraph work per task, not network). Going from 1 to 50 tasks raises p50 about 4x while
-  throughput rises about 10x, so the testbed is not the bottleneck before the real model is.
+- **Why one task takes 9.5 s with a fake LLM (measured 2026-11-03, read-only check): real overhead, no
+  simulated delay.** The code has no sleep or delay anywhere, the fake LLM calls take 0 ms (`llm_time_ms`
+  is 0 in the run), process start is not in the task latency (the runner waits until every process
+  answers `/health` before it sends the task), and no hop timeout is waited for (60 s is a maximum, not
+  a delay). The task's timeline (seconds after the task started): research hop 0.5-1.1 s (including the
+  file/page read through the tool), database agent 1.3 -> 5.5 s (**4.2 s**), tool agent 5.7 -> 9.2 s
+  (**3.5 s**), mailer and mock sink 9.2 -> 9.5 s (0.25 s). The two long steps are the two CrewAI agents
+  (database and tool): each imports CrewAI **lazily on its first task** (`agents/database.py` and
+  `agents/tool.py` import `agents.crew_llm` when first needed), and importing CrewAI takes about 3-4 s
+  in an agent process (11 s measured once in a cold process). After the import a CrewAI task costs only
+  0.12-0.22 s (3 tasks timed in one process). So the fixed cost is the one-time CrewAI import, paid in
+  the task path of every repetition (the runner starts fresh processes for each repetition), twice in
+  sequence in N4. It is included in every latency in this file (live ones too, roughly 8 s of N4's
+  178 s); it is not a property of the broker comparison but it does inflate small-task latency.
+  Avoiding it would mean importing CrewAI when an agent process starts, a change to agent code that
+  has not been made (it needs approval).
+- Going from 1 to 50 tasks raises p50 about 4x while throughput rises about 10x: the first tasks in
+  each process pay the import and the rest queue behind them, so the testbed is not the bottleneck
+  before the real model is.
 - A live (llama3:8b) P1 was not run: a single CPU-bound model serves one request at a time, so live
   latency at 10 and 50 tasks would be dominated by queueing for the model.
 - The broker-mode half of P1 is not run (no broker yet); this is the direct-mode baseline to compare
