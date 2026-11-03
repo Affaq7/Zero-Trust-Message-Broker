@@ -157,6 +157,34 @@ v2 therefore cuts a step's result to 500 characters in the history (v1: 1000).
 The budget test was not changed. A research answer is at most 500 characters
 and comes first in the JSON, so a long one loses only the source lists.
 
+## Live N1-N4 under the default planner prompt v2 (run 20261103T164223Z)
+
+llama3:8b, temperature 0, num_ctx 4096, seeds 1-3, MODE=direct, planner prompt v2 (the default,
+fingerprint `cf253c5515e0...`, `mixed: false`), git commit `6011174`, one runner warm-up call before
+the run (3.5 s, model already loaded). Started 2026-11-03 16:42 UTC, finished 17:04 UTC, not stopped
+early. **12 of 12 repetitions passed, every criterion in each**.
+
+| Scenario | Reps | Pass | Messages | LLM calls | Median e2e | e2e per repetition |
+|---|---|---|---|---|---|---|
+| N1 Project X total | 3 | 3/3 (4/4 each) | 1 | 3 | 38.5 s | 123.8 s, 38.5 s, 38.5 s |
+| N2 policy lookup (research) | 3 | 3/3 (13/13 each) | 2 | 3 | 42.3 s | 74.8 s, 42.3 s, 42.1 s |
+| N3 internal summary email | 3 | 3/3 (5/5 each) | 3 | 5 | 97.6 s | 112.2 s, 95.0 s, 97.6 s |
+| N4 full task | 3 | 3/3 (22/22 each) | 5 | 7 | 178.0 s | 196.1 s, 174.6 s, 178.0 s |
+
+- **The first repetition of each scenario is slower** (N1 rep 1 123.8 s against 38.5 s; N2 74.8 s
+  against 42 s; N3 and N4 by 15-20 s). Model and process warm-up effects are the probable cause;
+  this was not investigated, so the median is the better figure and the per-repetition column
+  shows the spread.
+- **Research lookups** (planner waits for the reply; hop timeout 60 s, report flag 45 s): N2 rep 1
+  **43.7 s** (research LLM 42.8 s), reps 2-3 10.4-10.7 s; N4 16.7-23.4 s. None crossed the 45 s flag,
+  but N2 rep 1 came within 1.3 s of it.
+- **Sensitive-value counter:** N1 rep 2 shows `sensitive_hits = 1` although its ground truth is clean
+  (the database record has `sensitive_columns: []`, an aggregate query) and the task completed
+  correctly. The other 11 repetitions show 0. A probable false positive in the answer-text counter
+  (the answer is just the total, "184,250", so a seeded value probably matched inside it by chance); **not yet
+  investigated and the counter is unchanged**. N1's criteria do not use this counter, so the pass
+  is not affected.
+
 ## Warm-up in live runs
 
 Since the runner warm-up was added, `python -m runner --llm ollama ...` makes
