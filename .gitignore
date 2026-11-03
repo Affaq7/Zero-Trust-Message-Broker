@@ -27,3 +27,6 @@ runtime/
 
 # Throwaway try-out files (real tests stay in tests/)
 scratch/
+
+# Supervisor explainer document (local only)
+*Testbed Explainer*.docx
