@@ -76,6 +76,7 @@ class TestbedConfig:
     python: str = sys.executable
     debug_prompts: bool = False              # PLANNER_DEBUG_PROMPTS=1 for the agents
     planner_prompt: str = ""                 # PLANNER_PROMPT; "" = the planner's default version
+    mode: str = "direct"                     # MODE for every agent process (operator-set, never from a message)
 
 
 class Testbed:
@@ -104,7 +105,7 @@ class Testbed:
             script = fake_dir / f"{a['name']}.json"
             script.write_text(json.dumps(c.fake_llm.get(a["name"], {})), encoding="utf-8")
             self.procs[a["name"]] = Proc(a["name"], "wrapper.main:app", ports[a["name"]], {
-                **base, "MODE": "direct", "AGENT_NAME": a["name"],
+                **base, "MODE": c.mode, "AGENT_NAME": a["name"],
                 "AGENT_IMPL": a.get("impl") or "", "AGENT_ROLE": a.get("role") or "",
                 "AGENT_URLS": urls, "MOCKS_URL": mocks.url, "LOG_DIR": str(logs),
                 "LLM_BACKEND": c.llm_backend, "LLM_SEED": str(c.seed),

@@ -162,7 +162,7 @@ class ResultsWriter:
 
     def start(self, scenarios: list[Scenario], *, reps: int, llm_backend: str,
               llm: LLMSettings, max_minutes: float | None,
-              planner_versions: dict[str, str] | None = None) -> None:
+              planner_versions: dict[str, str] | None = None, mode: str = "direct") -> None:
         """``planner_versions`` is scenario id -> prompt version (effective_planner_versions());
         left out, every scenario uses its own planner_prompt or the default."""
         versions = planner_versions if planner_versions is not None else effective_planner_versions(scenarios)
@@ -171,7 +171,7 @@ class ResultsWriter:
         single = len(used) == 1
         meta = {
             "run_id": self.run_id, "started_at": _now(), "ended_at": None,
-            "git_commit": _git_commit(), "mode": "direct",
+            "git_commit": _git_commit(), "mode": mode,
             # One planner prompt version for every scenario is the rule for a final baseline run;
             # "mixed" (and a null planner_prompt_sha256) flags a run that is not one.
             "planner_prompt_version": (used[0] or "default") if single else "mixed",

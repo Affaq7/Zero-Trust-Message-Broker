@@ -31,11 +31,27 @@ Run one agent by hand in either mode:
 $env:MODE="direct"; $env:AGENT_NAME="planner"; & ".\.venv\Scripts\python.exe" -m uvicorn wrapper.main:app --port 8001
 ```
 
-**The scenario runner always starts its processes with `MODE=direct`** (`runner/processes.py`, the
-`"MODE": "direct"` entry). It has no `--mode` option yet because how an agent reaches the broker
-(`BROKER_URL`, or `AGENT_URLS` pointing every name at the broker) is still open (Q26). Once that is
-decided, plugging in means: (1) implement the two broker branches above; (2) pass the mode and the
-broker address from the runner to the processes; (3) run the same scenarios.
+**The scenario runner sets `MODE` for every agent process with `--mode direct|broker`** (default
+`direct`; `runner/processes.py` puts it in each process's environment, never in a message, and the
+runner ignores any `MODE` it inherited). The mode is written to `run_meta.json` (`"mode"`) and shown in
+the report; a run keeps its mode, so `--resume` continues with the mode the run started with and
+refuses `--mode`.
+
+```powershell
+# the baseline (same as leaving --mode out)
+& ".\.venv\Scripts\python.exe" -m runner --mode direct --scenario N1 --reps 3
+# every agent process with MODE=broker
+& ".\.venv\Scripts\python.exe" -m runner --mode broker --scenario N1 --reps 3
+```
+
+Today `--mode broker` only proves the switch: the broker is not built, so the wrappers answer HTTP 501
+and `send_message()` raises, and every task that sends a message ends in error (the run still
+finishes and records it; the runner prints a note). Not-applicable scenarios are recorded the same way
+in both modes (they have no executable definition yet). How an agent reaches the broker
+(`BROKER_URL`, or `AGENT_URLS` pointing every name at the broker) is still open (Q26). Plugging the
+broker in means: (1) implement the two broker branches above; (2) pass the broker address from the
+runner to the processes (the mode is already passed); (3) run the same scenarios with `--mode broker`
+and compare with the direct-mode runs.
 
 ## 2. Reproduce the baseline
 

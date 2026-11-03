@@ -8,6 +8,10 @@
                      scenario/rep already in its results.csv (same scenarios,
                      reps and LLM backend as the original run)
   --dry-run          only load and check the scenario files
+  --mode direct|broker  MODE for every agent process (default direct, the baseline). Recorded in
+                     run_meta.json. broker is accepted but the broker is not built yet: the wrappers answer
+                     HTTP 501 / send_message raises, so every task ends in error. A run's mode is fixed;
+                     --resume continues with the mode it started with
   --debug-prompts    write each planner and research prompt to the run's logs (off by default)
   --planner-prompt V run every scenario with planner prompt version V (v1 = the
                      frozen baseline prompt, v2 = the candidate); default: each
@@ -56,6 +60,8 @@ def parse(argv):
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--debug-prompts", action="store_true",
                    help="write each planner and research prompt to <rep>/logs/prompts/ (off by default)")
+    p.add_argument("--mode", choices=["direct", "broker"],
+                   help="MODE for the agent processes (default direct; broker is not implemented yet)")
     p.add_argument("--planner-prompt", choices=["v1", "v2"],
                    help="planner prompt version for every scenario (default: the scenario's own, else the planner default, v2)")
     return p.parse_args(argv)
@@ -74,9 +80,9 @@ def main(argv=None) -> int:
         return _fail(f"scenario error: {exc}")
 
     if args.resume:
-        if args.scenario or args.reps or args.llm or args.dry_run or args.planner_prompt:
-            return _fail("--resume takes the run's own scenarios, reps, LLM and planner prompt; "
-                         "do not combine it with --scenario, --reps, --llm, --planner-prompt or --dry-run")
+        if args.scenario or args.reps or args.llm or args.dry_run or args.planner_prompt or args.mode:
+            return _fail("--resume takes the run's own scenarios, reps, LLM, planner prompt and mode; "
+                         "do not combine it with --scenario, --reps, --llm, --planner-prompt, --mode or --dry-run")
         meta_path = args.results_dir / args.resume / "run_meta.json"
         if not meta_path.exists():
             return _fail(f"no run {args.resume!r} in {args.results_dir}")
@@ -90,6 +96,7 @@ def main(argv=None) -> int:
         scenarios = {i: scenarios[i] for i in ids}
         reps_override = meta.get("reps") or None
         llm_backend = meta["llm"]["backend"]
+        mode = meta.get("mode") or "direct"
         versions = meta.get("scenario_planner_prompt")     # absent in runs made before versions existed
     else:
         if args.scenario:
@@ -99,6 +106,7 @@ def main(argv=None) -> int:
             scenarios = {k: v for k, v in scenarios.items() if k in args.scenario}
         reps_override = args.reps
         llm_backend = args.llm or "fake"
+        mode = args.mode or "direct"
         versions = None
     if not scenarios:
         return _fail(f"no scenario files in {args.scenarios_dir}")
@@ -118,8 +126,10 @@ def main(argv=None) -> int:
         run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         writer = ResultsWriter(args.results_dir, run_id)
         writer.start(list(scenarios.values()), reps=reps_override or 0, llm_backend=llm_backend, llm=llm,
-                     max_minutes=args.max_minutes, planner_versions=versions)
+                     max_minutes=args.max_minutes, planner_versions=versions, mode=mode)
         print(f"run {run_id} -> {writer.dir}")
+        if mode != "direct":
+            print(f"note: MODE={mode}; the broker is not implemented yet, so tasks that send a message will fail")
         if len(set(versions.values())) > 1:
             print(f"note: this run mixes planner prompt versions {dict(sorted(versions.items()))}; "
                   f"it is not a valid final baseline (use --planner-prompt)")
@@ -153,7 +163,7 @@ def main(argv=None) -> int:
                     outcomes = run_repetition(s, rep, writer.dir, concurrency=conc,
                                               llm_backend=llm_backend, llm_base_url=llm.base_url,
                                               debug_prompts=args.debug_prompts,
-                                              planner_prompt=versions.get(s.id))
+                                              planner_prompt=versions.get(s.id), mode=mode)
                     warmup.note_repetition(outcomes)
                     for o in outcomes:
                         ev = evaluate(s, o)

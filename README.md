@@ -325,6 +325,10 @@ Run from the repo root:
 # Add --debug-prompts to save every planner and research prompt and the model's
 # reply (stepNN.txt / stepNN.reply.json) under the run's logs\prompts folder.
 
+# MODE for the agent processes: direct (default, the baseline) or broker (not built yet:
+# every task that sends a message ends in error). Recorded in run_meta.json.
+& ".\.venv\Scripts\python.exe" -m runner --mode direct --scenario N1 --reps 1
+
 # Planner prompt version: v2 (default, frozen) can use the research agent; v1 is the
 # historical first-baseline prompt. A scenario may set "planner_prompt";
 # --planner-prompt overrides it for every scenario in the run.

@@ -312,9 +312,10 @@ How to switch `MODE`, what to run to reproduce the baseline and where the result
 1. `MODE=broker` is one environment variable per agent process, read once at start. Today the wrapper
    answers HTTP 501 (`wrapper/app.py`) and `send_message()` raises `BrokerModeNotImplementedError`
    (`wrapper/send.py`); those two branches are where the broker goes.
-2. The scenario runner starts every process with `MODE=direct` (`runner/processes.py`) and has no
-   `--mode` option. It needs the mode and the broker address passed through once Q26 (how an agent
-   reaches the broker) is decided.
+2. The scenario runner sets `MODE` for every process with `--mode direct|broker` (default `direct`)
+   and records it in `run_meta.json`. `--mode broker` works as a switch today (tasks fail with the 501 /
+   `BrokerModeNotImplementedError` above); the broker address still has to be passed through once Q26
+   (how an agent reaches the broker) is decided.
 3. Compare against `results\<run_id>\` of the baseline runs: N1-N4 live (run `20261103T164223Z`, 12/12
    passed) and P1 (run `20261103T175957Z`, fake LLM). The planner prompt (v2) and the research prompt
    are frozen, so the same scenarios give comparable runs; a broker run should use the same planner
