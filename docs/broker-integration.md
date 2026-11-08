@@ -317,8 +317,12 @@ How to switch `MODE`, what to run to reproduce the baseline and where the result
    `BrokerModeNotImplementedError` above); the broker address still has to be passed through once Q26
    (how an agent reaches the broker) is decided.
 3. Compare against `results\<run_id>\` of the baseline runs: N1-N4 live (run `20261103T221930Z`, 12/12
-   passed) and P1 (run `20261103T214437Z`, fake LLM). The planner prompt (v2) and the research prompt
+   passed) and P1 (run `20261108T194721Z`, fake LLM, 3 repetitions per level). The planner prompt (v2) and the research prompt
    are frozen, so the same scenarios give comparable runs; a broker run should use the same planner
    prompt version.
-4. Direct mode has no attack results to compare with: A9, A10, A11, A12 and A14 are not applicable
-   there, and A1-A8 and A13 are defined but not executed (a scripted attacker sender is not built).
+4. Attacks in direct mode: A1, A5, A6, A8, A13 run through the scripted attacker sender
+   (`agents/scripted.py`) and A2, A4 through the compromised-responder double (`agents/malicious.py`);
+   their attack-success numbers are withheld from the baseline report until reviewed. A3 and A7 are
+   defined but not executed, and A9, A10, A11, A12, A14 are not applicable in direct mode. The runner
+   refuses the scripted and compromised-responder scenarios under `--mode broker` until the broker
+   address is decided (Q26).

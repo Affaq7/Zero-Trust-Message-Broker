@@ -299,7 +299,7 @@ Encoded so far (10 of the 19 scenarios, in `scenarios\`):
 | **P1** | N4 at 1, 10 and 50 concurrent tasks (fake LLM only; latency, throughput) | runs (`runner` records p50/p95, wall time, throughput per level) |
 | **A9, A10, A11, A12, A14** | attacks that need the broker or a token check | **not applicable**: recorded as `not_applicable` with the reason, never run, left out of every rate |
 
-The other 9 (A1-A8, A13) are defined but not executed: they need a scripted attacker sender that is not built; see [Known limits](#known-limits-of-the-testbed).
+A1, A5, A6, A8, A13 run through the scripted attacker sender (`agents/scripted.py`) and A2, A4 through the compromised-responder double (`agents/malicious.py`); A3 and A7 are defined but not executed. Attack success needs payload status ok plus a ground-truth record, never HTTP 200 alone; see [Known limits](#known-limits-of-the-testbed).
 No scenario file sets a planner prompt: all use the default, v2. A final baseline
 run must use one planner prompt version for all scenarios (`--planner-prompt`).
 Run from the repo root:
@@ -456,18 +456,23 @@ Use `curl.exe`, not `curl`. In Windows PowerShell `curl` is an alias for
 - **A final baseline run uses one planner prompt version for every scenario**
   (the default, v2); `--planner-prompt v1` is kept to reproduce the historical
   run, and a run that mixes versions is flagged.
-- **10 of 19 scenarios are encoded.** N1, N2, N3, N4 and P1 run. **A9, A10, A11, A12 and
-  A14 are not applicable in direct mode** (they need the broker's denials,
-  quarantine, encrypted link or network isolation, or a token/proof check that
-  direct mode does not have); they are recorded and left out of every rate.
-  A13 *is* applicable in direct mode but not built yet.
-- **9 scenarios are not built yet** (no attack has been executed; the baseline has no attack result), for these reasons:
+- **17 of 19 scenarios are encoded and run.** N1, N2, N3, N4 and P1; the attacks A1, A5,
+  A6, A8, A13 (scripted sender) and A2, A4 (compromised responder). **A9, A10, A11, A12
+  and A14 are not applicable in direct mode** (they need the broker's denials, quarantine,
+  encrypted link or network isolation, or a token/proof check that direct mode does not
+  have); they are recorded and left out of every rate. A3 and A7 are defined but not
+  executed (A3 needs the live LLM planner to follow a poisoned document; A7 needs the
+  planner to relay `planner.request`).
+- **7 attacks are encoded and run; 2 are not executed.** Attack success is scored from the response
+  payload status plus a ground-truth record, never HTTP 200 alone; the attack-success numbers are
+  withheld from the baseline report until the user reviews them.
 
-  | Not built | Why |
+  | Scenario | How it is driven |
   |---|---|
-  | A1, A5, A8, A13 | the requester is the research agent (not built), or an agent acting under another agent's identity (not built); A8's target is still undecided (Q-S2) |
-  | A2, A4, A6, A7 | need an agent that misbehaves in a defined way or acts under another agent's identity (not built); A7 also needs the planner to handle `planner.request` (the action exists, the handler does not); the broker side of A4 now has its message (the tool agent sends `mail.deliver` to the mailer agent, both built), what is missing is the misbehaving tool agent |
-  | A3 | needs only the existing agents; not built yet |
+  | A1, A5, A6, A8, A13 | the **scripted attacker sender** (`agents/scripted.py`), an outside loopback process that sends crafted requests. A6 uses an expired token. It is not an impostor, so it leaves no entry in a victim's per-agent log |
+  | A2, A4 | the **compromised-responder double** (`agents/malicious.py`), the victim run under its own name (`AGENT_IMPL=malicious`) reusing the honest code path with one controlled deviation: A2's database appends a leak query to an aggregate reply; A4's tool adds one external recipient (`example.test`) to the outgoing mail |
+  | A3 | **not executed**: needs the live LLM planner to follow a poisoned document (the fixtures exist) |
+  | A7 | **not executed**: needs the planner to accept and relay `planner.request` (gap G2) |
 
   The broker team answered G1, G2 and G4 on 2026-10-24 (new actions and
   optional fields, `docs/open-questions.md` S10-S17) and G3 for mail (the

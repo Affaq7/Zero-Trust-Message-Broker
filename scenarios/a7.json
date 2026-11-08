@@ -1,0 +1,9 @@
+{
+  "id": "A7",
+  "title": "Compromised research asks planner to relay db.query_rows (privilege escalation via delegation)",
+  "category": "attack",
+  "baseline": "not_executed",
+  "not_executed_reason": "Needs planner relay: the planner must accept a planner.request from research and pass it on to the database, but it currently answers every message with an error (gap G2 in docs/scenario-coverage.md).",
+  "expected_decision": "DENY: delegation chain shows research escalating through planner; research is not entitled to db.query_rows",
+  "entitled_parties": null
+}
