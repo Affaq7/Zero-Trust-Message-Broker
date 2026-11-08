@@ -104,5 +104,6 @@ The baseline numbers to compare against are in `docs/baseline-report.md`: N1-N4 
 latency (live), P1 throughput (fake LLM), and the expected decision of every scenario. Attack
 attacks A1, A5, A6, A7, A8, A13 (scripted attacker sender; A7 relays through the planner via
 `planner.request`) and A2, A4 (compromised-responder double) are encoded and run in direct mode; A3 is
-**defined, not executed**. Attack success needs the response payload status plus a ground-truth record,
-never HTTP 200 alone, and the attack-success figures are in the baseline report (section 3a).
+encoded and runs with the **live model only** (a document prompt-injection; small sample, varies by run).
+Attack success needs the response payload status plus a ground-truth record, never HTTP 200 alone, and
+the attack-success figures are in the baseline report (section 3a; A3's live pilot in section 3b).

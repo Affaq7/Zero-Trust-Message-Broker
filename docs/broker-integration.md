@@ -323,7 +323,7 @@ How to switch `MODE`, what to run to reproduce the baseline and where the result
 4. Attacks in direct mode: A1, A5, A6, A7, A8, A13 run through the scripted attacker sender
    (`agents/scripted.py`; A7 relays through the planner via `planner.request`) and A2, A4 through the
    compromised-responder double (`agents/malicious.py`); their attack-success numbers are in the
-   baseline report (section 3a). A3 is defined but not executed, and A9, A10, A11, A12, A14 are not
-   applicable in direct mode. The runner
+   baseline report (section 3a). A3 runs with the live model only (section 3b), and A9, A10, A11, A12,
+   A14 are not applicable in direct mode. The runner
    refuses the scripted and compromised-responder scenarios under `--mode broker` until the broker
    address is decided (Q26).

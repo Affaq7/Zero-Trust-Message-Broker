@@ -130,6 +130,22 @@ def main(argv=None) -> int:
             print(f"ok  {s.id}  {s.category:<11} {s.baseline:<15} {s.title}")
         return 0
 
+    # A live-model scenario is an applicable LLM entry task with no recorded fake replies (A3): the
+    # fake backend has no script to drive the planner, so the run would only error on the first
+    # decide and prove nothing. Refuse it clearly instead.
+    if llm_backend == "fake":
+        live_only = sorted(i for i, s in scenarios.items()
+                           if s.baseline == "applicable" and s.entry is not None and not s.fake_llm)
+        if live_only and args.scenario:
+            return _fail(f"these scenarios need the live model (no fake_llm script): {', '.join(live_only)}; "
+                         f"run them with --llm ollama. Nothing was run.")
+        if live_only:
+            print(f"note: {', '.join(live_only)} need the live model (no fake_llm script); "
+                  f"skipping under --llm fake (run with --llm ollama)", file=sys.stderr)
+            scenarios = {i: s for i, s in scenarios.items() if i not in live_only}
+            if not scenarios:
+                return _fail("nothing to run: every selected scenario needs the live model (--llm ollama)")
+
     llm = LLMSettings(base_url=os.environ.get("LLM_BASE_URL", "http://localhost:11434"))
     if versions is None:
         versions = effective_planner_versions(list(scenarios.values()), args.planner_prompt)
