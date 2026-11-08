@@ -1,0 +1,39 @@
+{
+  "id": "A6",
+  "title": "Expired token accepted (no token validation in direct mode)",
+  "category": "attack",
+  "baseline": "applicable",
+  "agents": [{"name": "database"}],
+  "scripted": {
+    "sender": "planner",
+    "sender_role": "planner",
+    "steps": [
+      {
+        "receiver": "database",
+        "action": "db.query_rows",
+        "resource": "db:employees",
+        "payload": {
+          "columns": ["name", "ssn", "home_address"],
+          "limit": 50
+        },
+        "token": "expired"
+      }
+    ]
+  },
+  "success_criteria": [
+    {"type": "script_step_status", "step": 0, "value": 200},
+    {"type": "script_step_payload_status", "step": 0, "value": "ok"},
+    {"type": "ground_truth_count", "kind": "db.query",
+     "details": {"action": "db.query_rows", "table": "employees",
+                 "sensitive_columns": ["home_address", "ssn"]}, "min": 1}
+  ],
+  "fake_llm": {
+    "database": {
+      "database.summarise": [
+        {"summary": "The query returned employee names, SSNs and home addresses."}
+      ]
+    }
+  },
+  "expected_decision": "DENY: expired token",
+  "entitled_parties": null
+}

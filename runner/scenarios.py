@@ -24,12 +24,38 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class AppendQueryResult(Strict):
+    """Compromised database (agents/malicious.py): after the honest reply to ``on_action``,
+    run one extra read against the mock DB and append its rows. The leaked rows are real
+    seeded data fetched at run time, never written into this file."""
+
+    deviation: Literal["append_query_result"]
+    on_action: str = "db.query_aggregate"
+    resource: str = Field(min_length=1)           # e.g. "db:payroll"
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AddRecipient(Strict):
+    """Compromised tool (agents/malicious.py): add one recipient to the mail.deliver before it
+    reaches the mailer. Use only a reserved example domain (e.g. someone@example.test)."""
+
+    deviation: Literal["add_recipient"]
+    field: Literal["to", "cc", "bcc"] = "bcc"
+    address: str = Field(min_length=3, max_length=254)
+
+
+# The one controlled deviation a compromised responder applies; honest in every other way.
+Behaviour = Annotated[AppendQueryResult | AddRecipient, Field(discriminator="deviation")]
+
+
 class AgentProcess(Strict):
     """One wrapper process the runner starts for this scenario."""
 
     name: Name                      # AGENT_NAME
     impl: Name | None = None        # AGENT_IMPL (default: name)
     role: Name | None = None        # AGENT_ROLE (default: name if it is a catalog role)
+    # Fault-injection deviation for a compromised responder; only with impl "malicious".
+    behaviour: Behaviour | None = None
 
 
 class Entry(Strict):
@@ -147,10 +173,91 @@ class NoSensitiveValues(Strict):
     type: Literal["no_sensitive_values"]
 
 
+class SensitiveValuesPresent(Strict):
+    """At least ``min`` seeded sensitive values appear in the outcome (the answer, the logged
+    reply envelopes or delivered mail). The inverse of no_sensitive_values: an attack scenario
+    uses it to show a leak really happened (HTTP 200 alone is never enough)."""
+
+    type: Literal["sensitive_values_present"]
+    min: int = Field(default=1, ge=1)
+
+
+class ScriptStepStatus(Strict):
+    """The HTTP status code of scripted step N must equal ``value``."""
+
+    type: Literal["script_step_status"]
+    step: int = Field(ge=0)
+    value: int
+
+
+class ScriptStepBodyContains(Strict):
+    """The JSON-serialised response body of scripted step N must contain ``value``."""
+
+    type: Literal["script_step_body_contains"]
+    step: int = Field(ge=0)
+    value: str = Field(min_length=1)
+
+
+class ScriptStepBodyNotContains(Strict):
+    """The JSON-serialised response body of scripted step N must NOT contain ``value``."""
+
+    type: Literal["script_step_body_not_contains"]
+    step: int = Field(ge=0)
+    value: str = Field(min_length=1)
+
+
+class ScriptAllStepsStatus(Strict):
+    """Every scripted step must return the given HTTP status code."""
+
+    type: Literal["script_all_steps_status"]
+    value: int
+
+
+class ScriptStepPayloadStatus(Strict):
+    """response_body.payload.status of scripted step N must equal ``value``.
+
+    Agents answer HTTP 200 even when the action failed (status "error"), so
+    the HTTP code alone does not show that the action ran."""
+
+    type: Literal["script_step_payload_status"]
+    step: int = Field(ge=0)
+    value: Literal["ok", "error"]
+
+
 Criterion = Annotated[AnswerContains | AnswerNotContains | AnswerContainsNumber | GroundTruthCount | TaskStatus
-                      | EnvelopeCount | GroundTruthPathPrefix | GroundTruthTextContains | NoSensitiveValues,
+                      | EnvelopeCount | GroundTruthPathPrefix | GroundTruthTextContains | NoSensitiveValues
+                      | SensitiveValuesPresent | ScriptStepStatus | ScriptStepBodyContains | ScriptStepBodyNotContains
+                      | ScriptAllStepsStatus | ScriptStepPayloadStatus,
                       Field(discriminator="type")]
 
+
+# --- scripted-attack definitions (used by agents/scripted.py) -----------------
+
+class ScriptStep(Strict):
+    """One HTTP request the scripted attacker sends."""
+
+    receiver: Name
+    action: str = Field(min_length=1)
+    resource: str = Field(min_length=1)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    sender: Name | None = None
+    sender_role: Name | None = None
+    msg_type: Literal["request", "response"] = "request"
+    delegation_chain: list[str] | None = None
+    token: Literal["valid", "expired", "wrong_key", "missing"] = "valid"
+    extra_fields: dict[str, Any] = Field(default_factory=dict)
+    pause_ms: int = Field(default=0, ge=0, le=10000)
+
+
+class ScriptedAttack(Strict):
+    """Configuration for the scripted attacker subprocess."""
+
+    sender: Name
+    sender_role: Name
+    steps: list[ScriptStep] = Field(min_length=1, max_length=50)
+
+
+# --- fake-LLM definitions ----------------------------------------------------
 
 class FakeRule(Strict):
     if_prompt_contains: str = Field(min_length=1)
@@ -172,8 +279,12 @@ class Scenario(Strict):
     id: Annotated[str, Field(pattern=r"^[A-Z][0-9]{1,2}$")]
     title: str = Field(min_length=1, max_length=200)
     category: Literal["normal", "attack", "performance"]
-    baseline: Literal["applicable", "not_applicable"] = "applicable"
+    # not_applicable: direct mode has no such mechanism (nothing runs, left out of every rate).
+    # not_executed: defined, but the testbed cannot run it yet (nothing runs, left out of every rate,
+    # reported under its own status with the reason).
+    baseline: Literal["applicable", "not_applicable", "not_executed"] = "applicable"
     not_applicable_reason: str | None = None
+    not_executed_reason: str | None = None
     # Required for applicable scenarios; may be left out when not_applicable
     # (nothing is started for those).
     agents: list[AgentProcess] = Field(default_factory=list)
@@ -192,6 +303,8 @@ class Scenario(Strict):
     # A purpose maps to a list (replies consumed in order) or, for concurrent tasks, to rules
     # {"rules": [{"if_prompt_contains": ..., "reply": ...}], "default": reply} (not consumed).
     fake_llm: dict[Name, dict[Name, list[Any] | FakeRules]] = Field(default_factory=dict)
+    # Scripted-attack definition (mutually exclusive with entry).
+    scripted: ScriptedAttack | None = None
     # Waiting for docs/scenario-coverage.md; accepted, may stay empty.
     expected_decision: str | None = None
     entitled_parties: dict[str, Any] | None = None
@@ -201,15 +314,31 @@ class Scenario(Strict):
         names = [a.name for a in self.agents]
         if len(set(names)) != len(names):
             raise ValueError("each agent name may appear once")
-        if self.baseline == "applicable" and (not self.agents or self.entry is None):
-            raise ValueError("an applicable scenario needs agents and an entry")
+        if self.scripted is not None and self.entry is not None:
+            raise ValueError("a scenario must use either entry or scripted, not both")
+        if self.baseline == "applicable":
+            if not self.agents:
+                raise ValueError("an applicable scenario needs agents")
+            if self.entry is None and self.scripted is None:
+                raise ValueError("an applicable scenario needs an entry or scripted block")
         if self.entry is not None and self.entry.agent not in names:
             raise ValueError(f"entry agent {self.entry.agent!r} is not in agents")
+        if self.scripted is not None:
+            for i, step in enumerate(self.scripted.steps):
+                if step.receiver not in names:
+                    raise ValueError(f"scripted step {i} receiver {step.receiver!r} is not in agents")
+        for a in self.agents:
+            if a.behaviour is not None and a.impl != "malicious":
+                raise ValueError(f"agent {a.name!r} has a behaviour block but impl is not 'malicious'")
         unknown = set(self.fake_llm) - set(names)
         if unknown:
             raise ValueError(f"fake_llm names agents that are not started: {sorted(unknown)}")
         if self.baseline == "not_applicable" and not self.not_applicable_reason:
             raise ValueError("not_applicable needs a not_applicable_reason")
+        if self.baseline == "not_executed" and not self.not_executed_reason:
+            raise ValueError("not_executed needs a not_executed_reason")
+        if self.baseline != "not_executed" and self.not_executed_reason:
+            raise ValueError("not_executed_reason is only for baseline not_executed")
         if any(c < 1 or c > 100 for c in self.concurrency) or not self.concurrency:
             raise ValueError("concurrency values must be 1-100")
         return self

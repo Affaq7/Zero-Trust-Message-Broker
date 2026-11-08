@@ -1,4 +1,4 @@
-"""The scenario files in scenarios/: N1-N4 and the not-applicable attacks.
+"""The scenario files in scenarios/: N1-N4, scripted attacks and the not-applicable attacks.
 
 Runs them through real processes with the fake LLM; the live run is manual
 (python -m runner --llm ollama ...).
@@ -17,13 +17,19 @@ def scenarios():
     return load_scenarios(DEFAULT_SCENARIOS_DIR)
 
 
-NOT_APPLICABLE = ["A10", "A11", "A12", "A14", "A9"]
+NOT_APPLICABLE = ["A9", "A10", "A11", "A12", "A14"]
+NOT_EXECUTED = ["A3", "A7"]                    # defined, but the testbed cannot run them yet
+COMPROMISED = ["A2", "A4"]                     # run through the compromised-responder double
+SCRIPTED = ["A1", "A5", "A6", "A8", "A13"]
 
 
 def test_encoded_set(scenarios):
-    assert sorted(scenarios) == sorted(["N1", "N2", "N3", "N4", "P1", *NOT_APPLICABLE])
+    assert sorted(scenarios) == sorted(["N1", "N2", "N3", "N4", "P1", *NOT_APPLICABLE, *NOT_EXECUTED,
+                                        *COMPROMISED, *SCRIPTED])
     for sid in ("N1", "N2", "N3", "N4"):
         assert scenarios[sid].category == "normal" and scenarios[sid].baseline == "applicable"
+    for sid in SCRIPTED:
+        assert scenarios[sid].category == "attack" and scenarios[sid].scripted is not None
 
 
 @pytest.mark.parametrize("sid", NOT_APPLICABLE)
@@ -33,6 +39,60 @@ def test_not_applicable_attacks(scenarios, sid):
     assert s.not_applicable_reason and len(s.not_applicable_reason) > 20
     assert s.agents == [] and s.entry is None and s.success_criteria == []
     assert s.expected_decision                                  # runner-only, from the team sheet
+
+
+@pytest.mark.parametrize("sid, words", [
+    ("A3", "poisoned document"), ("A7", "planner")])
+def test_not_executed_attacks_have_their_specific_reason(scenarios, sid, words):
+    s = scenarios[sid]
+    assert (s.category, s.baseline) == ("attack", "not_executed")
+    assert words in s.not_executed_reason and s.not_applicable_reason is None
+    assert s.agents == [] and s.entry is None and s.scripted is None and s.success_criteria == []
+
+
+@pytest.mark.parametrize("sid, victim", [("A2", "database"), ("A4", "tool")])
+def test_compromised_responder_attacks_are_applicable(scenarios, sid, victim):
+    s = scenarios[sid]
+    assert (s.category, s.baseline) == ("attack", "applicable")
+    [bad] = [a for a in s.agents if a.impl == "malicious"]
+    assert bad.name == victim and bad.behaviour is not None
+    assert s.entry is not None and s.scripted is None
+
+
+def test_cli_records_not_executed_separately_and_starts_nothing(tmp_path):
+    import csv
+    import json
+
+    from runner.__main__ import main
+    args = ["--results-dir", str(tmp_path)] + [a for sid in NOT_EXECUTED for a in ("--scenario", sid)]
+    assert main(args) == 0
+    [run] = list(tmp_path.iterdir())
+    with open(run / "results.csv", encoding="utf-8", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert sorted(r["scenario_id"] for r in rows) == sorted(NOT_EXECUTED)
+    assert all(r["status"] == "not_executed" and r["attack_succeeded"] == "" and r["not_executed_reason"]
+               and r["not_applicable_reason"] == "" for r in rows)
+    meta = json.loads((run / "run_meta.json").read_text(encoding="utf-8"))
+    assert sorted(meta["not_executed"]) == sorted(NOT_EXECUTED) and meta["not_applicable"] == {}
+    with open(run / "summary.csv", encoding="utf-8", newline="") as f:
+        assert list(csv.DictReader(f)) == []                      # excluded from every rate
+    assert not any(p.is_dir() for p in run.iterdir())             # nothing ran
+
+
+def test_report_lists_not_executed_under_its_own_heading_with_reasons(tmp_path):
+    from runner.__main__ import main
+    from runner.report import main as report_main
+    assert main(["--results-dir", str(tmp_path), "--scenario", "A3", "--scenario", "A7",
+                 "--scenario", "A9"]) == 0
+    [run] = list(tmp_path.iterdir())
+    assert report_main([run.name, "--results-dir", str(tmp_path)]) == 0
+    md = (run / "report.md").read_text(encoding="utf-8")
+    ne_part = md.split("## Defined, not executed")[1]
+    for sid, words in [("A3", "poisoned document"), ("A7", "planner")]:
+        assert f"**{sid}**: " in ne_part and words in ne_part
+    assert "**A9**" not in ne_part and "**A9**" in md.split("## Not applicable in direct mode")[1].split("## Defined")[0]
+    results_table = md.split("## Results per scenario")[1].split("## Not applicable")[0]
+    assert "| A3 |" not in results_table and "| A9 |" not in results_table      # in no rate table
 
 
 def test_s6_reasons_for_a10_and_a14(scenarios):

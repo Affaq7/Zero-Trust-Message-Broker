@@ -9,7 +9,8 @@
 
 Rows are appended as soon as a repetition ends, so an interrupted run keeps
 what it finished. Scenarios marked not_applicable get one row with
-status not_applicable and are left out of every rate.
+status not_applicable and are left out of every rate; scenarios marked not_executed (defined,
+but the testbed cannot run them yet) get one row with status not_executed, likewise left out.
 """
 
 import csv
@@ -33,11 +34,15 @@ COLUMNS = [
     "attack_succeeded", "over_exposure", "sensitive_hits", "messages", "llm_calls", "llm_time_ms",
     "research_llm_time_ms", "research_lookup_ms_max",
     "criteria_passed", "criteria_total", "criteria_failed", "expected_decision", "broker_decision", "detected",
-    "not_applicable_reason", "error",
+    "not_applicable_reason", "error", "not_executed_reason",
 ]
 SUMMARY_COLUMNS = ["scenario_id", "category", "concurrency", "runs", "completed", "task_completed",
                    "attack_succeeded", "median_latency_ms", "mean_latency_ms", "max_latency_ms",
                    "p95_latency_ms", "median_messages", "wall_time_s", "throughput_per_s"]
+
+
+# Statuses of rows that never ran: no task, no latency, no rate.
+NOT_RUN_STATUSES = ("not_applicable", "not_executed")
 
 
 def _now() -> str:
@@ -188,6 +193,8 @@ class ResultsWriter:
             "scenarios": {s.id: scenario_checksum(s) for s in scenarios},
             "not_applicable": {s.id: s.not_applicable_reason for s in scenarios
                                if s.baseline == "not_applicable"},
+            "not_executed": {s.id: s.not_executed_reason for s in scenarios
+                             if s.baseline == "not_executed"},
             "stopped_early": False,
         }
         self.meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
@@ -208,8 +215,8 @@ class ResultsWriter:
     def done_keys(self) -> tuple[set[tuple[str, int, int]], set[str]]:
         """(scenario_id, rep, concurrency) already recorded, and not_applicable ids recorded."""
         runs = {(r["scenario_id"], r["rep"], r["concurrency"]) for r in self.rows
-                if r["status"] != "not_applicable"}
-        na = {r["scenario_id"] for r in self.rows if r["status"] == "not_applicable"}
+                if r["status"] not in NOT_RUN_STATUSES}
+        na = {r["scenario_id"] for r in self.rows if r["status"] in NOT_RUN_STATUSES}
         return runs, na
 
     def finish(self, stopped_early: bool = False, warmups: list[dict] | None = None,
@@ -287,12 +294,19 @@ class ResultsWriter:
                           "not_applicable_reason": scenario.not_applicable_reason,
                           "expected_decision": scenario.expected_decision})
 
+    def add_not_executed(self, scenario: Scenario) -> None:
+        self._append_csv({"run_id": self.run_id, "scenario_id": scenario.id,
+                          "category": scenario.category, "baseline": scenario.baseline,
+                          "status": "not_executed",
+                          "not_executed_reason": scenario.not_executed_reason,
+                          "expected_decision": scenario.expected_decision})
+
     # --- summary -------------------------------------------------------------------
 
     def write_summary(self) -> None:
         groups: dict[tuple, list[dict]] = {}
         for r in self.rows:
-            if r["status"] == "not_applicable":
+            if r["status"] in NOT_RUN_STATUSES:
                 continue
             groups.setdefault((r["scenario_id"], r["category"], r["concurrency"]), []).append(r)
         with open(self.dir / "summary.csv", "w", encoding="utf-8", newline="") as f:

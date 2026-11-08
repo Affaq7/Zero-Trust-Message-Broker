@@ -41,7 +41,7 @@ from pathlib import Path
 from agents.llm import LLMSettings
 from runner.evaluate import evaluate
 from runner.results import ResultsWriter, effective_planner_versions, scenario_checksum
-from runner.run import rep_dir_for, run_repetition
+from runner.run import rep_dir_for, run_repetition, run_scripted_repetition
 from runner.scenarios import DEFAULT_SCENARIOS_DIR, REPO_ROOT, ScenarioError, load_scenarios
 from runner.warmup import Warmup, WarmupFailed, make_warmup_client, warm_up_call
 
@@ -108,6 +108,21 @@ def main(argv=None) -> int:
         llm_backend = args.llm or "fake"
         mode = args.mode or "direct"
         versions = None
+    if mode == "broker":
+        # Scenarios that drive a local attacker (the scripted sender, or a compromised responder
+        # run under a victim's name) assume direct agent-to-agent calls; routing them through a
+        # broker needs the broker's address, which is undecided.
+        def _local_attacker(s):
+            return s.scripted is not None or any(a.impl == "malicious" for a in s.agents)
+        refused = sorted(i for i, s in scenarios.items() if _local_attacker(s))
+        if refused and args.scenario:
+            return _fail(f"scripted and compromised-responder scenarios are not supported in broker mode yet: "
+                         f"the broker address is undecided (refused: {', '.join(refused)}); nothing was run or scored")
+        if refused:
+            print(f"note: scripted and compromised-responder scenarios are not supported in broker mode yet: "
+                  f"the broker address is undecided; skipping {', '.join(refused)} (not run, not scored)",
+                  file=sys.stderr)
+            scenarios = {i: s for i, s in scenarios.items() if i not in refused}
     if not scenarios:
         return _fail(f"no scenario files in {args.scenarios_dir}")
     if args.dry_run:
@@ -146,8 +161,14 @@ def main(argv=None) -> int:
                     writer.add_not_applicable(s)
                     print(f"{s.id}: not applicable ({s.not_applicable_reason})")
                 continue
+            if s.baseline == "not_executed":
+                if s.id not in done_na:
+                    writer.add_not_executed(s)
+                    print(f"{s.id}: defined, not executed ({s.not_executed_reason})")
+                continue
             for rep in range(1, (reps_override or s.reps) + 1):
-                for conc in s.concurrency:
+                conc_levels = [1] if s.scripted is not None else s.concurrency
+                for conc in conc_levels:
                     if (s.id, rep, conc) in done_runs:
                         continue
                     if deadline and time.monotonic() > deadline:
@@ -160,16 +181,25 @@ def main(argv=None) -> int:
                     if (done := warmup.before_scenario(s.id)):
                         print(f"warm-up before {s.id}: {done['duration_s']} s ({done['reason']}); "
                               f"not counted in any task")
-                    outcomes = run_repetition(s, rep, writer.dir, concurrency=conc,
-                                              llm_backend=llm_backend, llm_base_url=llm.base_url,
-                                              debug_prompts=args.debug_prompts,
-                                              planner_prompt=versions.get(s.id), mode=mode)
+                    if s.scripted is not None:
+                        outcomes = run_scripted_repetition(
+                            s, rep, writer.dir, llm_backend=llm_backend,
+                            llm_base_url=llm.base_url, debug_prompts=args.debug_prompts,
+                            mode=mode)
+                    else:
+                        outcomes = run_repetition(s, rep, writer.dir, concurrency=conc,
+                                                  llm_backend=llm_backend, llm_base_url=llm.base_url,
+                                                  debug_prompts=args.debug_prompts,
+                                                  planner_prompt=versions.get(s.id), mode=mode)
                     warmup.note_repetition(outcomes)
                     for o in outcomes:
                         ev = evaluate(s, o)
                         writer.add(s, o, ev)
+                        label = (f"attack_succeeded={ev.attack_succeeded}"
+                                 if s.category == "attack"
+                                 else f"completed={ev.task_completed}")
                         print(f"{s.id} rep {rep} c{conc} slot {o.slot}: {o.status} "
-                              f"completed={ev.task_completed} {o.latency_ms} ms")
+                              f"{label} {o.latency_ms} ms")
     except StopIteration:
         print("time budget reached; stopping")
     except WarmupFailed as exc:

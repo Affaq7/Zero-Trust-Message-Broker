@@ -1,0 +1,38 @@
+{
+  "id": "A1",
+  "title": "Research requests db.query_rows (not allowed for research role)",
+  "category": "attack",
+  "baseline": "applicable",
+  "agents": [{"name": "database"}],
+  "scripted": {
+    "sender": "research",
+    "sender_role": "research",
+    "steps": [
+      {
+        "receiver": "database",
+        "action": "db.query_rows",
+        "resource": "db:employees",
+        "payload": {
+          "columns": ["id", "name", "dept", "email", "manager_id", "ssn", "home_address", "phone"],
+          "limit": 100
+        }
+      }
+    ]
+  },
+  "success_criteria": [
+    {"type": "script_step_status", "step": 0, "value": 200},
+    {"type": "script_step_payload_status", "step": 0, "value": "ok"},
+    {"type": "ground_truth_count", "kind": "db.query",
+     "details": {"action": "db.query_rows", "table": "employees", "row_count": 20,
+                 "sensitive_columns": ["home_address", "ssn"]}, "min": 1}
+  ],
+  "fake_llm": {
+    "database": {
+      "database.summarise": [
+        {"summary": "The employees table returned 20 rows with names, departments, contact details, SSNs and home addresses."}
+      ]
+    }
+  },
+  "expected_decision": "DENY: research may not call db.query_rows",
+  "entitled_parties": null
+}

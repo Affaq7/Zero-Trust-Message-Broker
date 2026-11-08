@@ -89,7 +89,7 @@ def test_not_applicable_needs_no_agents_or_entry(tmp_path):
 
 def test_applicable_still_needs_agents_and_entry(tmp_path):
     data = {"id": "X5", "title": "Example", "category": "normal"}
-    with pytest.raises(ScenarioError, match="needs agents and an entry"):
+    with pytest.raises(ScenarioError, match="needs agents|entry or scripted"):
         load_scenario(write(tmp_path, "x5.json", data))
 
 

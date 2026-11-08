@@ -49,6 +49,18 @@ def make_stub_token(sub: str, role: str, aud: str, now: int | None = None,
     return jwt.encode(claims.model_dump(), key, algorithm="EdDSA", headers={"typ": "JWT"})
 
 
+def make_expired_token(sub: str, role: str, aud: str,
+                       key: Ed25519PrivateKey | None = None) -> str:
+    """A structurally valid JWT that expired 600 s ago."""
+    past = int(time.time()) - 900
+    return make_stub_token(sub, role, aud, now=past, key=key)
+
+
+def make_wrong_key_token(sub: str, role: str, aud: str) -> str:
+    """A JWT signed with a throwaway key that no agent recognises."""
+    return make_stub_token(sub, role, aud, key=Ed25519PrivateKey.generate())
+
+
 class StubCredentials:
     """One process identity: sub = AGENT_NAME, its role, one in-memory key."""
 

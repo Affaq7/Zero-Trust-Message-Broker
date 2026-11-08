@@ -5,10 +5,14 @@ mock world), send POST /task to the entry agent once per concurrent slot
 (each with its own trace_id), wait up to the scenario timeout, then collect
 the envelopes (wrapper logs), the ground truth (mock services) and the LLM
 calls (by trace_id, so concurrent tasks never share calls) for each trace.
-Processes are stopped afterwards.
+Scripted-attack scenarios skip POST /task; they launch agents/scripted.py as
+a subprocess that sends its own raw requests and exits.
 """
 
 import json
+import os
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -47,6 +51,7 @@ class TaskOutcome:
     envelopes: list[dict] = field(default_factory=list)
     ground_truth: list[dict] = field(default_factory=list)
     llm_calls: list[dict] = field(default_factory=list)
+    script_log: list[dict] = field(default_factory=list)
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -132,6 +137,75 @@ def run_repetition(scenario: Scenario, rep: int, run_dir: Path, *, concurrency: 
         o.envelopes = collect_envelopes(log_dir, o.trace_id)
         o.llm_calls = collect_llm_calls(log_dir, o.trace_id)
     return outcomes
+
+
+def run_scripted_repetition(scenario: Scenario, rep: int, run_dir: Path, *,
+                            llm_backend: str = "fake", llm_base_url: str = "http://localhost:11434",
+                            debug_prompts: bool = False, mode: str = "direct") -> list[TaskOutcome]:
+    """Run one repetition of a scripted-attack scenario.
+
+    Starts victim agents, launches agents/scripted.py as a subprocess, waits
+    for it to finish, reads its log, and returns a single-element list of
+    TaskOutcome (matching the signature of run_repetition).
+    """
+    if scenario.scripted is None:
+        raise ValueError(f"{scenario.id} is not a scripted scenario")
+    rep_dir = rep_dir_for(run_dir, scenario.id, 1, rep)
+    config = TestbedConfig(
+        agents=[a.model_dump() for a in scenario.agents], run_dir=rep_dir, seed=rep,
+        llm_backend=llm_backend, fake_llm=scenario.model_dump(mode="json")["fake_llm"],
+        llm_base_url=llm_base_url, debug_prompts=debug_prompts, mode=mode)
+    log_dir = rep_dir / "logs"
+    script_log_path = rep_dir / "script_log.jsonl"
+    script_config_path = rep_dir / "script_config.json"
+    trace_id = str(uuid4())
+
+    with Testbed(config) as tb:
+        mocks_url = tb.url("mocks")
+        httpx.post(f"{mocks_url}/reset", timeout=30).raise_for_status()
+
+        agent_urls = {name: proc.url for name, proc in tb.procs.items() if name != "mocks"}
+        script_cfg = {
+            "agent_urls": agent_urls,
+            "sender": scenario.scripted.sender,
+            "sender_role": scenario.scripted.sender_role,
+            "steps": [s.model_dump(mode="json") for s in scenario.scripted.steps],
+            "log_path": str(script_log_path),
+            "trace_id": trace_id,
+            "max_steps": 50,
+        }
+        script_config_path.parent.mkdir(parents=True, exist_ok=True)
+        script_config_path.write_text(json.dumps(script_cfg), encoding="utf-8")
+
+        started = utc_now()
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "agents.scripted", "--config", str(script_config_path)],
+                timeout=scenario.timeout_s, capture_output=True, text=True,
+                env={**os.environ, "PYTHONUNBUFFERED": "1"})
+            status = "completed" if result.returncode == 0 else "error"
+            error = result.stderr.strip() if result.returncode != 0 else None
+        except subprocess.TimeoutExpired:
+            status = "timeout"
+            error = f"scripted agent did not finish within {scenario.timeout_s}s"
+        ended = utc_now()
+
+        gt_resp = httpx.get(f"{mocks_url}/ground-truth", timeout=30)
+        ground_truth = gt_resp.json()["records"]
+
+    script_log = _read_jsonl(script_log_path)
+    entries = [e for e in script_log if "step" in e]
+
+    envelopes = collect_envelopes(log_dir, trace_id)
+
+    o = TaskOutcome(
+        scenario_id=scenario.id, rep=rep, concurrency=1, slot=0,
+        trace_id=trace_id, started_at=iso(started), ended_at=iso(ended),
+        latency_ms=round((ended - started).total_seconds() * 1000),
+        status=status, error=error, envelopes=envelopes,
+        ground_truth=ground_truth, script_log=entries)
+    o.llm_calls = collect_llm_calls(log_dir, trace_id)      # as run_repetition does; llm_time_ms is derived from it
+    return [o]
 
 
 def outcome_dict(o: TaskOutcome) -> dict[str, Any]:

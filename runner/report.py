@@ -35,7 +35,7 @@ REPORT_COLUMNS = [
     "scenario_id", "category", "baseline", "runs", "task_completed", "task_completed_rate",
     "attack_succeeded", "median_latency_ms", "mean_latency_ms", "max_latency_ms",
     "median_llm_calls", "median_messages", "median_research_llm_ms", "max_lookup_ms",
-    "slow_lookups", "not_applicable_reason",
+    "slow_lookups", "not_applicable_reason", "not_executed_reason",
 ]
 
 
@@ -83,6 +83,11 @@ def scenario_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             out.append({"scenario_id": sid, "category": na[0]["category"], "baseline": "not_applicable",
                         "runs": 0, "not_applicable_reason": na[0]["not_applicable_reason"]})
             continue
+        ne = [r for r in rs if r["status"] == "not_executed"]
+        if ne:
+            out.append({"scenario_id": sid, "category": ne[0]["category"], "baseline": "not_executed",
+                        "runs": 0, "not_executed_reason": ne[0].get("not_executed_reason")})
+            continue
         lat = [r["e2e_latency_ms"] for r in rs if r["status"] == "completed"]
         done, n = _rate(rs, "task_completed")
         attack, n_attack = _rate(rs, "attack_succeeded")
@@ -101,7 +106,7 @@ def scenario_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "max_lookup_ms": max((r["research_lookup_ms_max"] for r in rs
                                   if r.get("research_lookup_ms_max") is not None), default=None),
             "slow_lookups": sum(1 for r in rs if (r.get("research_lookup_ms_max") or 0) > LOOKUP_WARN_MS),
-            "not_applicable_reason": "",
+            "not_applicable_reason": "", "not_executed_reason": "",
         })
     return out
 
@@ -163,7 +168,7 @@ def lookup_lines(runs: list[tuple[str, dict, list]]) -> list[str]:
 
 def performance_lines(runs: list[tuple[str, dict, list]]) -> list[str]:
     """Per-concurrency-level table for performance scenarios (P1)."""
-    rows = [r for _, _, rs in runs for r in rs if r["category"] == "performance" and r["status"] != "not_applicable"]
+    rows = [r for _, _, rs in runs for r in rs if r["category"] == "performance" and r["status"] not in ("not_applicable", "not_executed")]
     if not rows:
         return []
     lines = ["", "## Performance (concurrency levels)", "",
@@ -202,7 +207,7 @@ def render_md(title: str, runs: list[tuple[str, dict, list]], table: list[dict])
               "| Scenario | Category | Runs | Task completed | Median / mean / max latency | "
               "Median LLM calls | Median messages |", "|---|---|---|---|---|---|---|"]
     for t in table:
-        if t["baseline"] == "not_applicable" or t["category"] == "performance":
+        if t["baseline"] in ("not_applicable", "not_executed") or t["category"] == "performance":
             continue                                     # performance rows: see the concurrency table below
         rate = f"{t['task_completed']} ({t['task_completed_rate']:.0%})" if t["task_completed"] else "-"
         lines.append(f"| {t['scenario_id']} | {t['category']} | {t['runs']} | {rate} | "
@@ -211,7 +216,11 @@ def render_md(title: str, runs: list[tuple[str, dict, list]], table: list[dict])
     na = [t for t in table if t["baseline"] == "not_applicable"]
     lines += ["", "## Not applicable in direct mode", ""]
     lines += [f"- **{t['scenario_id']}**: {t['not_applicable_reason']}" for t in na] or ["- none"]
-    lines += ["", "Not-applicable scenarios are excluded from every rate. Latency counts completed runs only."]
+    ne = [t for t in table if t["baseline"] == "not_executed"]
+    lines += ["", "## Defined, not executed", "",
+              "These scenarios are defined, but the testbed cannot run them yet. No attack outcome exists for them."]
+    lines += [""] + ([f"- **{t['scenario_id']}**: {t['not_executed_reason']}" for t in ne] or ["- none"])
+    lines += ["", "Not-applicable and not-executed scenarios are excluded from every rate. Latency counts completed runs only."]
     lines += performance_lines(runs) + lookup_lines(runs) + [""]
     return "\n".join(lines)
 

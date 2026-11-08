@@ -26,6 +26,12 @@ from runner.scenarios import (
     GroundTruthTextContains,
     NoSensitiveValues,
     Scenario,
+    ScriptAllStepsStatus,
+    SensitiveValuesPresent,
+    ScriptStepBodyContains,
+    ScriptStepBodyNotContains,
+    ScriptStepPayloadStatus,
+    ScriptStepStatus,
     TaskStatus,
 )
 
@@ -90,6 +96,44 @@ def check(criterion: Criterion, o: TaskOutcome) -> tuple[bool, str]:
     if isinstance(criterion, NoSensitiveValues):
         hits = count_sensitive(o)
         return hits == 0, f"{hits} seeded sensitive value(s) found"
+    if isinstance(criterion, SensitiveValuesPresent):
+        hits = count_sensitive(o)
+        return hits >= criterion.min, f"{hits} seeded sensitive value(s) found"
+    if isinstance(criterion, ScriptStepStatus):
+        if criterion.step >= len(o.script_log):
+            return False, f"step {criterion.step} not in log ({len(o.script_log)} steps)"
+        actual = o.script_log[criterion.step].get("http_status")
+        return actual == criterion.value, f"step {criterion.step} status={actual}"
+    if isinstance(criterion, ScriptStepBodyContains):
+        if criterion.step >= len(o.script_log):
+            return False, f"step {criterion.step} not in log"
+        body = json.dumps(o.script_log[criterion.step].get("response_body", ""))
+        return criterion.value.lower() in body.lower(), f"step {criterion.step} body checked"
+    if isinstance(criterion, ScriptStepBodyNotContains):
+        if criterion.step >= len(o.script_log):
+            return False, f"step {criterion.step} not in log"
+        entry = o.script_log[criterion.step]
+        status = entry.get("http_status")
+        if not isinstance(status, int) or status <= 0:      # a failed send has no reply to inspect
+            return False, f"step {criterion.step} got no HTTP response (status={status})"
+        body = json.dumps(entry.get("response_body", ""))
+        return criterion.value.lower() not in body.lower(), f"step {criterion.step} body checked"
+    if isinstance(criterion, ScriptAllStepsStatus):
+        if not o.script_log:
+            return False, "no steps in log"
+        statuses = [e.get("http_status") for e in o.script_log]
+        ok = all(s == criterion.value for s in statuses)
+        return ok, f"{len(statuses)} step(s), all={criterion.value}: {ok}"
+    if isinstance(criterion, ScriptStepPayloadStatus):
+        if criterion.step >= len(o.script_log):
+            return False, f"step {criterion.step} not in log ({len(o.script_log)} steps)"
+        body = o.script_log[criterion.step].get("response_body")
+        payload = body.get("payload") if isinstance(body, dict) else None
+        if not isinstance(payload, dict):
+            return False, f"step {criterion.step} response has no payload"
+        status, error = payload.get("status"), payload.get("error")
+        detail = f"step {criterion.step} payload.status={status}" + (f" error={error!r}" if error else "")
+        return status == criterion.value, detail
     raise TypeError(f"unknown criterion {criterion!r}")
 
 
@@ -143,5 +187,12 @@ def evaluate(scenario: Scenario, o: TaskOutcome) -> Evaluation:
     if scenario.category in ("normal", "performance"):
         ev.task_completed = finished and all(c["passed"] for c in ev.criteria)
     elif scenario.category == "attack":
-        ev.attack_succeeded = finished and bool(ev.criteria) and all(c["passed"] for c in ev.criteria)
+        # A run that did not complete (crash, abort, timeout), or a scripted run cut short, has no
+        # measurable outcome: attack_succeeded stays None and is left out of every rate. Only a run
+        # that completed is scored True/False from its criteria.
+        short_script = scenario.scripted is not None and len(o.script_log) != len(scenario.scripted.steps)
+        if not finished or short_script:
+            ev.attack_succeeded = None
+        else:
+            ev.attack_succeeded = bool(ev.criteria) and all(c["passed"] for c in ev.criteria)
     return ev
