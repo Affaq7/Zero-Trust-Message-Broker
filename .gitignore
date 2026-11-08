@@ -30,3 +30,6 @@ scratch/
 
 # Supervisor explainer document (local only)
 *Testbed Explainer*.docx
+
+# The team's raw scenario CSV (never committed)
+scenarios/source/
