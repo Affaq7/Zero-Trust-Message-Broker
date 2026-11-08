@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from agents import database, dummy, mailer, planner, research, tool
+from agents import database, dummy, mailer, malicious, planner, research, tool
 from agents.base import AgentFn, TaskFn
 from wrapper.config import ConfigError
 
@@ -14,6 +14,8 @@ AGENTS: dict[str, AgentFn] = {
     "planner": planner.handle,
     "mailer": mailer.handle,
     "research": research.handle,
+    # Compromised-responder test double; runs under a victim's name (AGENT_NAME=database or tool).
+    "malicious": malicious.handle,
 }
 
 # Task handlers (POST /task), only for agents that can start work for the user.
@@ -27,6 +29,7 @@ TASKS: dict[str, TaskFn] = {
 PRELOADS: dict[str, Callable[[], None]] = {
     "tool": tool.preload,
     "database": database.preload,
+    "malicious": malicious.preload,
 }
 
 

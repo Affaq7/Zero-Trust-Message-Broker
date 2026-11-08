@@ -22,7 +22,7 @@ import httpx
 
 from agents.telemetry import OFF as TELEMETRY_OFF
 
-CONTROLLED_PREFIXES = ("MODE", "AGENT_", "LLM_", "LOG_DIR", "MOCKS_", "PLANNER_", "RESEARCH_")
+CONTROLLED_PREFIXES = ("MODE", "AGENT_", "LLM_", "LOG_DIR", "MOCKS_", "PLANNER_", "RESEARCH_", "MALICIOUS_")
 STARTUP_TIMEOUT_S = 120.0
 STOP_TIMEOUT_S = 10.0
 
@@ -101,15 +101,22 @@ class Testbed:
         urls = ",".join(f"{n}=http://127.0.0.1:{p}" for n, p in ports.items())
         fake_dir = c.run_dir / "fake_llm"
         fake_dir.mkdir(parents=True, exist_ok=True)
+        behaviour_dir = c.run_dir / "behaviour"
+        behaviour_dir.mkdir(parents=True, exist_ok=True)
         for a in c.agents:
             script = fake_dir / f"{a['name']}.json"
             script.write_text(json.dumps(c.fake_llm.get(a["name"], {})), encoding="utf-8")
+            # Compromised-responder deviation (data, like the fake-LLM script); empty file when honest.
+            behaviour = a.get("behaviour")
+            behaviour_file = behaviour_dir / f"{a['name']}.json"
+            behaviour_file.write_text(json.dumps(behaviour) if behaviour else "", encoding="utf-8")
             self.procs[a["name"]] = Proc(a["name"], "wrapper.main:app", ports[a["name"]], {
                 **base, "MODE": c.mode, "AGENT_NAME": a["name"],
                 "AGENT_IMPL": a.get("impl") or "", "AGENT_ROLE": a.get("role") or "",
                 "AGENT_URLS": urls, "MOCKS_URL": mocks.url, "LOG_DIR": str(logs),
                 "LLM_BACKEND": c.llm_backend, "LLM_SEED": str(c.seed),
                 "LLM_FAKE_SCRIPT": str(script) if c.llm_backend == "fake" else "",
+                "MALICIOUS_BEHAVIOUR": str(behaviour_file) if behaviour else "",
                 "LLM_BASE_URL": c.llm_base_url,
                 "PLANNER_DEBUG_PROMPTS": "1" if c.debug_prompts else "",
                 "RESEARCH_DEBUG_PROMPTS": "1" if c.debug_prompts else "",

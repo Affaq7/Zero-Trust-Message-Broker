@@ -19,7 +19,8 @@ print(before, "crewai" in sys.modules)
 
 
 def test_only_the_crewai_agents_have_a_preload():
-    assert set(PRELOADS) == {"database", "tool"}
+    # "malicious" reuses the database/tool code path (which imports CrewAI), so it preloads too.
+    assert set(PRELOADS) == {"database", "tool", "malicious"}
     preload_agent("planner")  # no hook, no error
 
 
