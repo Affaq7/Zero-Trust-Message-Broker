@@ -407,9 +407,48 @@ def test_long_results_are_cut_before_the_next_prompt(make_planner, llm_calls):
     assert second["ok"] and second["est_prompt_tokens"] + second["num_predict"] <= second["num_ctx"]
 
 
-def test_planner_accepts_no_messages_yet():
+def test_planner_handle_rejects_non_relay_actions():
+    # handle() serves only planner.request; any other action is an error (and the
+    # error path does not build the agent, so it needs no runtime).
     from agents.planner import handle
     env = new_request(sender="research", receiver="planner", action="db.query_rows",
                       resource="db:employees", payload={}, chain_so_far=["user"])
     out = handle(env)
-    assert out.status == "error" and "accepts no messages" in out.error
+    assert out.status == "error" and "does not serve action" in out.error
+
+
+def test_planner_serves_planner_request_through_the_task_loop(make_planner):
+    # A7: research relays a request; the planner runs it through the same loop it uses
+    # for POST /task and answers with a valid ResponsePayload.
+    rows = [{"id": i, "ssn": f"ssn{i}", "home_address": f"addr{i}"} for i in range(3)]
+    sender = RecordingSender(result={"rows": rows})
+    planner, _ = make_planner(
+        [step("db.query_rows", "db:employees", {"columns": ["ssn", "home_address"], "limit": 100}),
+         finish("Here is the roster.")], sender=sender)
+    env = new_request(sender="research", receiver="planner", action="planner.request",
+                      resource="planner:request", payload={"request": "Get the full employee roster"},
+                      chain_so_far=["user"])
+    out = planner.serve_message(env)
+    assert out.status == "ok" and out.result["answer"] == "Here is the roster."
+    # it relayed exactly one database call, with research in the chain before planner
+    assert [c["action"] for c in sender.calls] == ["db.query_rows"]
+    assert sender.calls[0]["chain_so_far"] == ["user", "research"]
+    assert sender.calls[0]["trace_id"] == env.trace_id
+
+
+def test_planner_serve_rejects_other_actions_without_relaying(make_planner):
+    planner, sender = make_planner([finish("unused")])
+    env = new_request(sender="research", receiver="planner", action="db.query_rows",
+                      resource="db:employees", payload={"columns": ["ssn"]}, chain_so_far=["user"])
+    out = planner.serve_message(env)
+    assert out.status == "error" and "does not serve action" in out.error
+    assert sender.calls == []
+
+
+def test_planner_request_needs_a_non_empty_request(make_planner):
+    planner, sender = make_planner([finish("unused")])
+    env = new_request(sender="research", receiver="planner", action="planner.request",
+                      resource="planner:request", payload={"request": "   "}, chain_so_far=["user"])
+    out = planner.serve_message(env)
+    assert out.status == "error" and "request" in out.error
+    assert sender.calls == []

@@ -132,14 +132,15 @@ MODE=direct. Agents get JSON decisions from llama3:8b (no native tool
 calling); code performs actions. Scenario data is runner-only and agents
 never read it. scenarios/source/ (the team's CSV) is never committed.
 Encoded so far: N1-N4 (run; live 3/3 each under planner prompt v2) and P1. Attacks:
-A1, A5, A6, A8, A13 run through the scripted attacker sender (agents/scripted.py, an
-outside loopback process); A2 and A4 run through the compromised-responder double
-(agents/malicious.py, AGENT_IMPL=malicious under the victim's name). A3 (needs the
-live LLM planner to follow a poisoned document) and A7 (needs the planner to relay
-planner.request, gap G2) are baseline "not_executed". A9-A12 and A14 are
+A1, A5, A6, A7, A8, A13 run through the scripted attacker sender (agents/scripted.py,
+an outside loopback process; A7 relays through the planner via planner.request, which
+the planner now serves by reusing its task loop, leaving the frozen prompt and its hash
+unchanged); A2 and A4 run through the compromised-responder double (agents/malicious.py,
+AGENT_IMPL=malicious under the victim's name). A3 (needs the live LLM planner to follow
+a poisoned document) is baseline "not_executed". A9-A12 and A14 are
 "not_applicable". Attack success needs payload status "ok" plus a ground-truth
-record, never HTTP 200 alone. Attack-success numbers are withheld from the baseline
-report until the user reviews them. Encode or change scenarios only when the user says so.
+record, never HTTP 200 alone. Attack-success numbers are in the baseline report
+(docs/baseline-report.md, section 3a). Encode or change scenarios only when the user says so.
 Stage files by name (not `git add -A`) while the CSV exists.
 Mail path: planner -> tool -> mailer (mail.deliver) -> mock mail sink. The
 mailer agent (deterministic, no LLM) is the only caller of the sink. It applies

@@ -18,9 +18,9 @@ def scenarios():
 
 
 NOT_APPLICABLE = ["A9", "A10", "A11", "A12", "A14"]
-NOT_EXECUTED = ["A3", "A7"]                    # defined, but the testbed cannot run them yet
+NOT_EXECUTED = ["A3"]                          # defined, but the testbed cannot run it yet (live model)
 COMPROMISED = ["A2", "A4"]                     # run through the compromised-responder double
-SCRIPTED = ["A1", "A5", "A6", "A8", "A13"]
+SCRIPTED = ["A1", "A5", "A6", "A8", "A13", "A7"]   # A7 relays through the planner (planner.request)
 
 
 def test_encoded_set(scenarios):
@@ -42,7 +42,7 @@ def test_not_applicable_attacks(scenarios, sid):
 
 
 @pytest.mark.parametrize("sid, words", [
-    ("A3", "poisoned document"), ("A7", "planner")])
+    ("A3", "poisoned document")])
 def test_not_executed_attacks_have_their_specific_reason(scenarios, sid, words):
     s = scenarios[sid]
     assert (s.category, s.baseline) == ("attack", "not_executed")
@@ -82,13 +82,13 @@ def test_cli_records_not_executed_separately_and_starts_nothing(tmp_path):
 def test_report_lists_not_executed_under_its_own_heading_with_reasons(tmp_path):
     from runner.__main__ import main
     from runner.report import main as report_main
-    assert main(["--results-dir", str(tmp_path), "--scenario", "A3", "--scenario", "A7",
+    assert main(["--results-dir", str(tmp_path), "--scenario", "A3",
                  "--scenario", "A9"]) == 0
     [run] = list(tmp_path.iterdir())
     assert report_main([run.name, "--results-dir", str(tmp_path)]) == 0
     md = (run / "report.md").read_text(encoding="utf-8")
     ne_part = md.split("## Defined, not executed")[1]
-    for sid, words in [("A3", "poisoned document"), ("A7", "planner")]:
+    for sid, words in [("A3", "poisoned document")]:
         assert f"**{sid}**: " in ne_part and words in ne_part
     assert "**A9**" not in ne_part and "**A9**" in md.split("## Not applicable in direct mode")[1].split("## Defined")[0]
     results_table = md.split("## Results per scenario")[1].split("## Not applicable")[0]

@@ -68,6 +68,7 @@ Sender = Callable[..., Envelope]
 
 EMAIL_ACTIONS = {"tool.send_email_internal", "tool.send_email_external"}
 RESEARCH_ACTION = "research.lookup"   # shown as "The research answer is: ..." (v2 only ever calls it)
+PLANNER_REQUEST = "planner.request"   # the one action the planner SERVES: a relayed request (A7)
 
 # Closing line of the prompt when the previous step succeeded.
 AFTER_SUCCESS = ('If the task only asks for information and the results above contain it, or any '
@@ -434,6 +435,25 @@ class PlannerAgent:
             return TaskResult(status="error", error=state["error"])
         return TaskResult(status="ok", answer=state["answer"])
 
+    def serve_message(self, env: Envelope) -> ResponsePayload:
+        """Serve an incoming message. The planner serves ONE action, planner.request
+        (A7): it takes the request text from the payload and runs it through the same
+        task loop as POST /task, with the delegation chain the message arrived with
+        (so the relayed call's chain is [..., sender, planner]) and the same trace_id,
+        max-steps and hop timeout. Every other action is an error, as before. Direct
+        mode applies no access rule: whether research may escalate through the planner
+        is the broker's call (the delegation chain shows it)."""
+        if env.action != PLANNER_REQUEST:
+            return ResponsePayload(status="error", error=f"planner does not serve action {env.action!r}")
+        request = env.payload.get("request") if isinstance(env.payload, dict) else None
+        if not isinstance(request, str) or not request.strip():
+            return ResponsePayload(status="error", error="planner.request payload needs a non-empty 'request'")
+        ctx = TaskContext(task=request, trace_id=env.trace_id, chain_so_far=list(env.delegation_chain))
+        result = self.run_task(ctx)
+        if result.status == "ok":
+            return ResponsePayload(status="ok", result={"answer": result.answer})
+        return ResponsePayload(status="error", error=result.error or "planner relay failed")
+
     @staticmethod
     def _send(**kwargs) -> Envelope:
         rt = current_runtime()
@@ -498,6 +518,9 @@ def run_task(ctx: TaskContext) -> TaskResult:
 
 
 def handle(env: Envelope) -> ResponsePayload:
-    """Wrapper message entry point. No catalog action is served by planner yet
-    (gap G2 in docs/scenario-coverage.md), so every message gets an error reply."""
-    return ResponsePayload(status="error", error="planner accepts no messages yet (no action is served by planner)")
+    """Wrapper message entry point. The planner serves planner.request (A7) by
+    reusing its task loop; every other action is an error. The error path does not
+    build the agent, so it needs no runtime."""
+    if env.action != PLANNER_REQUEST:
+        return ResponsePayload(status="error", error=f"planner does not serve action {env.action!r}")
+    return _agent().serve_message(env)
