@@ -4,6 +4,8 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from broker.identity.keys import (
+    b64url,
+    b64url_decode,
     jwk_thumbprint,
     private_key_from_text,
     private_key_to_text,
@@ -44,6 +46,16 @@ def test_private_key_text_round_trip():
     key = new_key()
     again = private_key_from_text(private_key_to_text(key))
     assert jwk_thumbprint(again.public_key()) == jwk_thumbprint(key.public_key())
+
+
+@pytest.mark.parametrize("text", ["ab+c", "ab/c", "ab!c", "abc=", "ab c", "a", 42])
+def test_b64url_decode_is_strict(text):
+    with pytest.raises(ValueError):
+        b64url_decode(text)
+
+
+def test_b64url_round_trip():
+    assert b64url_decode(b64url(b"\xfb\xff\x00")) == b"\xfb\xff\x00"
 
 
 @pytest.mark.parametrize("jwk", [
