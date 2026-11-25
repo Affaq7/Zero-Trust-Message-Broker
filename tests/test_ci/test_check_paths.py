@@ -83,15 +83,29 @@ def test_amna_owns_trust_and_defence():
 
 @pytest.mark.parametrize("branch, path", [
     ("kissa/x", "broker/trust/score.py"), ("kissa/x", "tests/test_broker/test_signing.py"),
-    ("kissa/x", "wrapper/runtime.py"), ("kissa/x", "pyproject.toml"), ("kissa/x", "broker/__init__.py"),
+    ("kissa/x", "wrapper/runtime.py"), ("kissa/x", "pyproject.toml"),
     ("amna/x", "broker/identity/keys.py"), ("amna/x", "tests/test_broker/test_registry.py"),
     ("amna/x", "docs/identity-spec.md"), ("amna/x", "runner/run.py"),
+    ("amna/x", "tests/test_broker/test_issue_credentials.py"),
+    ("amna/x", "tests/test_broker/test_file_credentials.py"),
+    ("amna/x", "tests/test_broker/test_proof_client.py"),
 ])
 def test_cross_owner_edits_need_the_label(branch, path):
     res = run(branch, [path])
     assert res.errors == [f"cross-owner-change: {path} is outside {branch.split('/')[0]}/* ownership; "
                           f"needs label {CROSS}"]
     assert run(branch, [path], [CROSS]).errors == []
+
+
+@pytest.mark.parametrize("branch", ["kissa/x", "amna/x", "afaq/x"])
+def test_broker_init_is_shared(branch):
+    assert run(branch, ["broker/__init__.py"]).errors == []
+
+
+def test_kissa_owns_her_credentials_and_proof_tests():
+    files = ["tests/test_broker/test_issue_credentials.py", "tests/test_broker/test_file_credentials.py",
+             "tests/test_broker/test_proof_client.py"]
+    assert run("kissa/x", files).errors == []
 
 
 def test_folder_patterns_do_not_match_lookalike_folders():
