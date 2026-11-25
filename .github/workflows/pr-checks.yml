@@ -1,0 +1,111 @@
+name: PR checks
+
+# pull_request (never pull_request_target): runs the PR's code with a read-only token
+# and no secrets. labeled/unlabeled re-run the checks so a newly added approval label counts.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUTF8: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45  # the suite alone takes about 14 minutes on a dev laptop
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            constraints.txt
+      # The project's own tests require the interpreter to be <repo>/.venv (CLAUDE.md).
+      - name: Install dependencies into .venv (as in CLAUDE.md)
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e ".[dev,agents]" -c constraints.txt
+      - name: Run the test suite (the live-Ollama test stays skipped)
+        run: .venv/bin/python -m pytest -q
+
+  secrets-and-forbidden-files:
+    name: secrets-and-forbidden-files
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Scan the PR diff (standard library only)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python scripts/ci/check_forbidden.py
+
+  protected-paths:
+    name: protected-paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      # Labels and the branch name are read from the event payload file inside the script,
+      # never interpolated into the shell.
+      - name: Check protected paths and ownership
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python scripts/ci/check_paths.py
+
+  direct-mode-smoke:
+    name: direct-mode-smoke
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            constraints.txt
+      - name: Install dependencies into .venv
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e ".[dev,agents]" -c constraints.txt
+      - name: Run N1 with the fake LLM
+        run: .venv/bin/python -m runner --scenario N1 --llm fake --reps 1 --results-dir "$RUNNER_TEMP/smoke-n1"
+      - name: Run A1 with the fake LLM
+        run: .venv/bin/python -m runner --scenario A1 --llm fake --reps 1 --results-dir "$RUNNER_TEMP/smoke-a1"
+      - name: Assert N1 task_completed and A1 attack_succeeded
+        run: |
+          .venv/bin/python scripts/ci/check_smoke.py "$RUNNER_TEMP/smoke-n1" N1 task_completed
+          .venv/bin/python scripts/ci/check_smoke.py "$RUNNER_TEMP/smoke-a1" A1 attack_succeeded

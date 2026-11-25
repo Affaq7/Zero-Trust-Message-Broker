@@ -34,7 +34,15 @@ def free_port() -> int:
 
 
 def port_is_free(port: int) -> bool:
+    """True if a new server could listen on the port now.
+
+    On Linux/macOS a port whose server just closed stays in TIME_WAIT for up to a
+    minute; uvicorn binds with SO_REUSEADDR and would start fine, so the check does
+    the same. Not on Windows, where SO_REUSEADDR would allow binding over a live server.
+    """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if os.name != "nt":
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind(("127.0.0.1", port))
             return True
