@@ -69,4 +69,4 @@ def test_stub_token_script_writes_no_files(tmp_path):
     run_script()
     after = {p for p in REPO_ROOT.rglob("*") if ".venv" not in p.parts and ".git" not in p.parts}
     assert not {p for p in after - before if "__pycache__" not in p.parts}
-    assert not (REPO_ROOT / "keys").exists()
+    assert (REPO_ROOT / "keys") in before or not (REPO_ROOT / "keys").exists()  # issued keys (K1) may exist

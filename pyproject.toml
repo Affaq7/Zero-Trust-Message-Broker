@@ -29,7 +29,7 @@ agents = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["contracts*", "wrapper*", "agents*", "runner*", "mocks*"]
+include = ["contracts*", "wrapper*", "agents*", "runner*", "mocks*", "broker*"]
 
 [tool.setuptools.package-data]
 contracts = ["*.yaml"]

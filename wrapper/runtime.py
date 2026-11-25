@@ -9,7 +9,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 from agents.llm import reset_call_trace, set_call_trace
-from wrapper.credentials import StubCredentials
+from wrapper.credentials import FileCredentials, StubCredentials, load_credentials
 
 
 class NoRoleError(RuntimeError):
@@ -20,11 +20,11 @@ class NoRoleError(RuntimeError):
 class AgentRuntime:
     agent_name: str
     role: str | None
-    credentials: StubCredentials | None = field(default=None, compare=False)
+    credentials: StubCredentials | FileCredentials | None = field(default=None, compare=False)
 
     @classmethod
     def create(cls, agent_name: str, role: str | None) -> "AgentRuntime":
-        return cls(agent_name, role, StubCredentials(agent_name, role) if role else None)
+        return cls(agent_name, role, load_credentials(agent_name, role) if role else None)
 
     def token_for(self, receiver: str) -> str:
         if self.credentials is None:
