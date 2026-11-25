@@ -23,7 +23,7 @@
       ]
     }
   },
-  "shared": ["docs/open-questions.md"],
+  "shared": ["docs/open-questions.md", "broker/__init__.py"],
   "owners": {
     "kissa/": [
       "broker/identity/",
@@ -35,6 +35,8 @@
       "tests/test_broker/*identity*",
       "tests/test_broker/*policy*",
       "tests/test_broker/*validate*",
+      "tests/test_broker/test_*credentials*.py",
+      "tests/test_broker/test_*proof*.py",
       "docs/identity-spec.md",
       "docs/scenario-control-map.md"
     ],
@@ -51,7 +53,8 @@
       "tests/test_broker/*signing*",
       "docs/trust-calibration.md",
       "docs/detection-design.md",
-      "docs/audit-log-examples.md"
+      "docs/audit-log-examples.md",
+      "figures/trust_*"
     ],
     "afaq/": ["*"]
   }
