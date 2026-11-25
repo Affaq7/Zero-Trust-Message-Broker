@@ -1,0 +1,48 @@
+# Trust engine settings (task A2). PROVISIONAL starting values, calibrated in
+# A-R1 (docs/trust-calibration.md, planned). Approved by Amna on 2026-11-25.
+# Sources: Amna's Research and Design Plan (sections 4.3, 4.4, 5, 5.1) and
+# docs/detection-design.md (A-R2).
+
+# T = identity x Ia + behaviour x Ba + context x Ca (plan 4.3). Must sum to 1.
+weights:
+  identity: 0.20
+  behaviour: 0.50
+  context: 0.30
+
+# Ba: share of ALLOW in the agent's last `window` decisions. A new agent's
+# window starts full of ALLOW, so one early DENY cannot quarantine it.
+window: 20
+
+# Decay after a violation: Ca = Ca x e^(-lambda x R). Recovery after a clean
+# (ALLOW, no violation) message: Ca = Ca + eta x (1 - Ca). Plan 4.4.
+lambda: 0.5
+eta: 0.05
+
+# Severity R per violation. One message counts once: if it has several
+# violations, the highest severity is used (plan 4.4, A-R2 "count once").
+severity:
+  DENY: 1.0                     # any DENY decision, whatever its reason code
+  INDIVIDUAL_DATA_REQUEST: 1.0  # V5
+  INJECTION_CUE: 0.5            # V3, request (K4) or reply (F3)
+  REPLY_SANITIZED: 0.5          # the responder's reply had data cut (A2 scenario)
+
+# State bands (plan, section 5). Dropping happens as soon as T is below an
+# edge; climbing needs T at least `hysteresis` above the edge.
+bands:
+  active: 0.80
+  suspicious: 0.60
+  restricted: 0.40
+hysteresis: 0.05
+
+# V4 (BURST_DETECTED) moves the agent to Suspicious and holds it there for this
+# many messages, counting the burst message, before it may climb again. Not in
+# the plan: a starting value (the window size), to be checked in A-R1.
+burst_hold_messages: 20
+
+# release(agent, reviewer): the only way out of Quarantined (plan 5.1). The
+# agent restarts in Restricted at this T and earns its way up.
+release_T: 0.50
+
+# V4: more than this many requests from one agent within one task (trace_id)
+# is a burst (A-R2, section 1). Used by broker/trust/rules.py.
+burst_limit_per_trace: 10

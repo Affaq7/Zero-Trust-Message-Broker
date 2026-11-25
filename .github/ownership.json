@@ -1,0 +1,58 @@
+{
+  "_comment": [
+    "Read by scripts/ci/check_paths.py (job 'protected-paths'). Edit this file to change ownership.",
+    "Pattern syntax: a pattern ending in '/' matches everything under that folder;",
+    "otherwise it is a glob matched against the whole repo-relative path ('*' also crosses '/').",
+    "Rules 'contracts' and 'frozen_prompts' apply to every branch, including afaq/*."
+  ],
+  "labels": {
+    "contracts": "contracts-approved",
+    "frozen_prompts": "prompt-change-approved",
+    "cross_owner": "cross-owner-approved"
+  },
+  "contracts": ["contracts/"],
+  "frozen_prompts": {
+    "_comment": "The planner v1/v2 and research prompts are built inside these modules; their SHA-256 records are lines in docs/measurements.md.",
+    "files": ["agents/planner.py", "agents/research.py"],
+    "hash_records": {
+      "file": "docs/measurements.md",
+      "markers": [
+        "Historical planner prompt v1 SHA-256",
+        "Frozen planner prompt SHA-256 (v2, the default)",
+        "Frozen research prompt SHA-256"
+      ]
+    }
+  },
+  "shared": ["docs/open-questions.md"],
+  "owners": {
+    "kissa/": [
+      "broker/identity/",
+      "broker/policy/",
+      "broker/intercept/",
+      "scripts/issue_credentials.py",
+      "wrapper/credentials.py",
+      "tests/test_broker/*registry*",
+      "tests/test_broker/*identity*",
+      "tests/test_broker/*policy*",
+      "tests/test_broker/*validate*",
+      "docs/identity-spec.md",
+      "docs/scenario-control-map.md"
+    ],
+    "amna/": [
+      "broker/trust/",
+      "broker/defence/",
+      "broker/audit/",
+      "broker/transport/",
+      "scripts/simulate_trust.py",
+      "tests/test_broker/*risk*",
+      "tests/test_broker/*trust*",
+      "tests/test_broker/*defence*",
+      "tests/test_broker/*audit*",
+      "tests/test_broker/*signing*",
+      "docs/trust-calibration.md",
+      "docs/detection-design.md",
+      "docs/audit-log-examples.md"
+    ],
+    "afaq/": ["*"]
+  }
+}

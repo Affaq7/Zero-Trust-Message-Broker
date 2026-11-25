@@ -213,8 +213,8 @@ its code and `ok=False`. Success returns `ok=True` with `agent`, `role`,
 | 11 | `sub == env.sender` (`contracts.tokens.sub_matches_sender`) | `SUB_MISMATCH` |
 | 12 | `role ==` registry role | `ROLE_MISMATCH` |
 | 13 | `X-Agent-Proof` present and not the stub value | `PROOF_MISSING` |
-| 14 | proof decodes, `typ` is `ztb-proof+jwt`, `alg` is `EdDSA`, all claims present | `PROOF_MALFORMED` |
-| 15 | proof signature verifies with the registry key named by `cnf.jkt` | `PROOF_KEY_MISMATCH` |
+| 14 | proof decodes, `typ` is `ztb-proof+jwt`, `alg` is `EdDSA` | `PROOF_MALFORMED` |
+| 15 | proof signature verifies with the registry key named by `cnf.jkt`; then exactly the six claims, `iat` a whole number, the rest non-empty strings (else `PROOF_MALFORMED`) | `PROOF_KEY_MISMATCH` |
 | 16 | proof `iat` within 30 s (5 s future leeway) | `PROOF_STALE` |
 | 17 | proof `aud` is `ztbroker` | `WRONG_AUDIENCE` |
 | 18 | `ath` matches the token | `PROOF_TOKEN_MISMATCH` |
@@ -275,6 +275,13 @@ through `verify.py`.
 | `NEEDS_APPROVAL` | ALLOW, `needs_human=True` | Conditional action that needs a human (`tool.send_email_external`) |
 | `POLICY_ALLOW` | ALLOW | all policy checks passed |
 
+Defence in depth: if policy is ever called with a failed identity it denies
+with that identity code; with an identity for another agent, `SUB_MISMATCH`;
+with an envelope that breaks `rule_violations()`, `RULE_VIOLATION` (same
+meaning as in step 1). The Conditional rules and the delegation limit
+(`max_delegation_agents: 3`) live in `broker/policy/rules.yaml`, which can
+only narrow the catalog, never widen it.
+
 ### Other steps (proposed, owners to confirm)
 
 | Code | Step | Owner |
@@ -282,7 +289,22 @@ through `verify.py`.
 | `AGENT_QUARANTINED` | 3, quarantine check | Amna |
 | `HITL_PENDING`, `HITL_REJECTED`, `HITL_TIMEOUT` | 7, approval queue (F3) | Afaq |
 
-Amna's content, risk and trust codes (steps 5, 6, 9) are added here by Amna.
+### Steps 3 and 6, quarantine and trust (Amna, A2 and A3; rules V1 to V5 in `docs/detection-design.md`)
+
+| Code | Kind | Rule | Effect | Module |
+|---|---|---|---|---|
+| `AGENT_QUARANTINED` | decision | step 3 | QUARANTINE for every message from a quarantined agent | `broker/defence/quarantine.py` (A3) |
+| `DENIAL_RATE_EXCEEDED` | decision | V1 | QUARANTINE on the denial that makes 5 in 60 s (verified identity only) | `broker/defence/quarantine.py` (A3) |
+| `TRUST_TOO_LOW` | decision | step 6 | DENY when T is below `required_trust` (A1) | `broker/trust/trust.py` (A2) |
+| `INJECTION_CUE` | event | V3 | lowers T (severity 0.5), audit log; from K4 (request) or F3 (reply) | `broker/trust/trust.py` (A2) |
+| `BURST_DETECTED` | event | V4 | state Suspicious for 20 messages, audit log; more than 10 requests per agent per trace | `broker/trust/rules.py` (A2) |
+| `INDIVIDUAL_DATA_REQUEST` | event | V5 | lowers T (severity 1.0), audit log; flag from F3 `minimum_necessary` | `broker/trust/trust.py` (A2) |
+| `REPLY_SANITIZED` | event | A2 scenario | lowers the responder's T (severity 0.5), audit log; from F3 | `broker/trust/trust.py` (A2) |
+
+A decision code is the `reason_code` of the broker's reply. An event code never
+decides on its own: it is passed to `TrustEngine.update(events=...)` and written
+to the audit log. V2 adds no code: it uses `ROLE_NOT_ALLOWED` and
+`DELEGATION_EXCEEDS_DELEGATOR` (step 4), counted once.
 
 ### Expected identity codes for the scenarios (input to K-R2)
 
@@ -330,3 +352,30 @@ be removed with team agreement.
    instead of `make_proof_stub(request)`; the key is `FileCredentials.private_key`.
 4. Scripted attacks: A6 uses a token from `--expired`; A14 uses
    `research-stolen.json`'s token with a freshly generated key for the proof.
+
+## 11. Changes from the proof of concept (report Appendix A, for K-R3)
+
+`broker/identity/verify.py` grew from the 138-line proof of concept and keeps
+its structure (token, then proof, then state) and its 9 cases, which are now
+pytest cases in `tests/test_broker/test_identity.py`. Decided on 2026-11-25
+(this spec wins over the proof of concept):
+
+| Point | Proof of concept | Broker (this spec) | Why |
+|---|---|---|---|
+| Token signer | broker issuer key, `typ` `at+jwt`, `kid` `broker-1` | the agent instance's own key, checked against the registry | registry is the trust anchor; 7 credential files, no issuer key to protect |
+| Proof `aud` | the receiver | `ztbroker` | the broker is the only party that checks proofs |
+| `msg_hash` | payload bytes only | the whole envelope without broker fields | receiver, action, resource and chain are signed too |
+| Leeway | 30 s | 5 s on token times; proof accepted for 30 s | tighter replay window |
+| Claims | `scope`, token deny list | neither (`extra="forbid"`); revocation through the epoch | one revocation mechanism |
+| Epoch | starts at 1 | starts at 0 | matches `revoke()` tests |
+| Replay set | kept forever | 60 s window | bounded memory |
+| Result | exception text | one reason code (section 8) | audit log and teammates use the codes |
+| Signature check | PyJWT `decode` | each JWT parsed once, Ed25519 checked with `cryptography`, strict base64url | PyJWT re-parsed every token on each call |
+
+Case 5 of Table 8 ("wrong receiver, audience does not match") now fails with
+`MSG_HASH_MISMATCH`, because the receiver is inside the signed envelope hash.
+
+Measured on the development machine (`scratch` benchmark, 5 runs of 2000
+checks, token and proof made in advance, in process): median 448 microseconds
+per check, worst run 461. The proof of concept measured 299 microseconds for a
+smaller check set. A test fails if the average goes over 1 ms.
