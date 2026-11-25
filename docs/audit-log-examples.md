@@ -117,7 +117,7 @@ A reviewer from the allowed list (`amna`, `kissa`, `afaq`) releases the agent. T
 
 ## 8. Revoke event (A10)
 
-An operator revokes the tool agent mid-session (registry status revoked, epoch + 1). Its next message fails identity with `AGENT_REVOKED`, which the pipeline would log as a decision line with that identity code.
+An operator revokes the tool agent mid-session (registry status revoked, epoch + 1). Its next message, with a token issued before the revoke, fails identity with `STALE_EPOCH` (epoch checked first; a new token while still revoked gets `AGENT_REVOKED`), which the pipeline would log as a decision line with that identity code.
 
 ```jsonl
 {"agent":"tool","by":"amna","denials":null,"entry_hash":"eebc047aeefdebc7fdd51d1e5f57f3a62172b6a506baffc616ea7bdb61e204c5","kind":"revoke","prev_hash":"6937c4c026527ecc17422e59c43ad9e4320ec198503811b84c6484cf1705b3cc","reason_code":null,"seq":8,"signature":"XOjY880YZr179pZxcq-CveRlqLSOdhJ4lcap2701eIltOvYFa2SDQx4V3LJ-0OjUKgRzK_rHIfd7cXiuMQgrDg","ts":"2026-11-25T19:06:00.000+00:00"}
