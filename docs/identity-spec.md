@@ -289,7 +289,22 @@ only narrow the catalog, never widen it.
 | `AGENT_QUARANTINED` | 3, quarantine check | Amna |
 | `HITL_PENDING`, `HITL_REJECTED`, `HITL_TIMEOUT` | 7, approval queue (F3) | Afaq |
 
-Amna's content, risk and trust codes (steps 5, 6, 9) are added here by Amna.
+### Steps 3 and 6, quarantine and trust (Amna, A2 and A3; rules V1 to V5 in `docs/detection-design.md`)
+
+| Code | Kind | Rule | Effect | Module |
+|---|---|---|---|---|
+| `AGENT_QUARANTINED` | decision | step 3 | QUARANTINE for every message from a quarantined agent | `broker/defence/quarantine.py` (A3) |
+| `DENIAL_RATE_EXCEEDED` | decision | V1 | QUARANTINE on the denial that makes 5 in 60 s (verified identity only) | `broker/defence/quarantine.py` (A3) |
+| `TRUST_TOO_LOW` | decision | step 6 | DENY when T is below `required_trust` (A1) | `broker/trust/trust.py` (A2) |
+| `INJECTION_CUE` | event | V3 | lowers T (severity 0.5), audit log; from K4 (request) or F3 (reply) | `broker/trust/trust.py` (A2) |
+| `BURST_DETECTED` | event | V4 | state Suspicious for 20 messages, audit log; more than 10 requests per agent per trace | `broker/trust/rules.py` (A2) |
+| `INDIVIDUAL_DATA_REQUEST` | event | V5 | lowers T (severity 1.0), audit log; flag from F3 `minimum_necessary` | `broker/trust/trust.py` (A2) |
+| `REPLY_SANITIZED` | event | A2 scenario | lowers the responder's T (severity 0.5), audit log; from F3 | `broker/trust/trust.py` (A2) |
+
+A decision code is the `reason_code` of the broker's reply. An event code never
+decides on its own: it is passed to `TrustEngine.update(events=...)` and written
+to the audit log. V2 adds no code: it uses `ROLE_NOT_ALLOWED` and
+`DELEGATION_EXCEEDS_DELEGATOR` (step 4), counted once.
 
 ### Expected identity codes for the scenarios (input to K-R2)
 
