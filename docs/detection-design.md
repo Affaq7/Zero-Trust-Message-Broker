@@ -20,7 +20,7 @@ audit log, never into an envelope, a token or the message log.
 | # | Rule | Fires when | Input | Plan |
 |---|---|---|---|---|
 | V1 | Denial rate | 5 DENY decisions for one agent within 60 s (both configurable) puts it in Quarantined. Only denials where identity was verified count (`IdentityResult.ok` and `agent` set); an identity failure has `agent=None` and is never counted against the claimed sender, so forged messages "from research" cannot quarantine the real research agent (Kissa, 25 Nov) | decisions the broker made, IdentityResult, broker clock | 5.3; scenario A9 |
-| V2 | Action unusual for the role | the policy step denies an action the agent's role may not call (catalog `allowed_roles`), or any agent in the `delegation_chain` may not call the action (A7; Kissa's `DELEGATION_EXCEEDS_DELEGATOR`) | PolicyResult, `delegation_chain` | 4.2, 5 (Suspicious: "meaningful anomaly") |
+| V2 | Action unusual for the role | the policy step denies an action the agent's role may not call (catalog `allowed_roles`), or any agent in the delegation chain (`delegation_chain`) may not call the action (A7; Kissa's `DELEGATION_EXCEEDS_DELEGATOR`) | PolicyResult, `delegation_chain` | 4.2, 5 (Suspicious: "meaningful anomaly") |
 | V3 | Injection cue | K4's `injection_cue` is true for a request; free-text fields are `justification`, `query`, `request`, `suggested_action`, email `subject` and `body` | ValidationResult | 2.5 (AgentDojo, AgentArmor) |
 | V4 | Message burst | one agent sends more than 10 requests within one task (same `trace_id`); configurable | envelope `sender`, `trace_id` | not a rule in the plan; rate limiting is in TrustGate (3.2) |
 | V5 | Individual-level data request | a request asks for individual-level personal data (M9): `db.query_rows` (A1 `individual_data: true`), or a request naming a sensitive column (ssn, bank_account, salary, home_address) | envelope, A1 ratings | 4.2, 5 (Quarantine: "critical violation") |
@@ -99,9 +99,10 @@ live-model runs or more varied tasks are needed for realistic variety.
 No conflict found with: the A9 numbers (5 in 60 s), labels and trust scores
 staying broker-side, or the catalog roles.
 
-## 4. Reason codes (for `docs/identity-spec.md` section 8; Kissa adds them)
+## 4. Reason codes (in `docs/identity-spec.md` section 8)
 
-Checked against section 8: none of these clash with an existing code.
+Kissa added these to section 8 (her PR #6, 25 Nov). None of them clash with an
+existing code. If the two lists ever differ, section 8 is the reference.
 
 | Code | Rule | Decision | Module |
 |---|---|---|---|
@@ -109,8 +110,9 @@ Checked against section 8: none of these clash with an existing code.
 | `DENIAL_RATE_EXCEEDED` | V1 | QUARANTINE (the denial that crosses 5 in 60 s) | `broker/defence/quarantine.py` (A3) |
 | (none new) | V2 | DENY with Kissa's `ROLE_NOT_ALLOWED` or `DELEGATION_EXCEEDS_DELEGATOR` (count once) | `broker/policy/engine.py` (K3) |
 | `INJECTION_CUE` | V3 | none on its own; lowers T, audit log | `broker/trust/trust.py` (A2) |
-| `BURST_DETECTED` | V4 | none on its own; state Suspicious, audit log | `broker/trust/trust.py` (A2) |
+| `BURST_DETECTED` | V4 | none on its own; state Suspicious, audit log | `broker/trust/rules.py` (A2) |
 | `INDIVIDUAL_DATA_REQUEST` | V5 | none on its own; lowers T, audit log | `broker/trust/trust.py` (A2) |
+| `REPLY_SANITIZED` | A2 scenario (F3 reply check) | none on its own; lowers the responder's T, audit log | `broker/trust/trust.py` (A2) |
 | `TRUST_TOO_LOW` | step 6 | DENY when T is below `required_trust` (A1) | `broker/trust/trust.py` (A2) |
 
 ## 5. Still to decide
