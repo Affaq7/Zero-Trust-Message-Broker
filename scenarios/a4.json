@@ -36,8 +36,16 @@
     ]}
   },
   "expected_broker": {
-    "status": "pending_f3",
-    "reason": "needs the content checks (F3): not merged yet (step 5 recipient check on mail.deliver)",
-    "expected_decision": "DENY (RECIPIENT_NOT_APPROVED): a recipient the request did not name"
+    "expected_decision": "DENY (RECIPIENT_NOT_APPROVED): a recipient the request did not name",
+    "decisions": [
+      {
+        "decision": "DENY",
+        "reason_code": "RECIPIENT_NOT_APPROVED"
+      },
+      {
+        "decision": "ALLOW",
+        "reason_code": "POLICY_ALLOW"
+      }
+    ]
   }
 }

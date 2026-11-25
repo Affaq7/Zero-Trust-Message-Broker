@@ -64,8 +64,8 @@ def test_not_run_statuses_need_a_reason():
 def test_encoded_scenarios_in_broker_mode():
     s = load_scenarios()
     run = sorted(k for k, v in s.items() if k.startswith("A") and v.broker_status() == "applicable")
-    assert run == ["A1", "A10", "A12", "A13", "A14", "A3", "A5", "A6", "A7", "A8", "A9"]
-    assert [k for k, v in s.items() if v.broker_status() == "pending_f3"] == ["A2", "A4"]
+    assert run == ["A1", "A10", "A12", "A13", "A14", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9"]
+    assert [k for k, v in s.items() if v.broker_status() == "pending_f3"] == []        # F3 is in
     assert s["A11"].broker_status() == "not_applicable"
     assert s["A3"].expected_broker.decisions is None                 # live model: not scored automatically
     for sid in ("A9", "A10", "A12", "A14"):                          # direct mode is unchanged

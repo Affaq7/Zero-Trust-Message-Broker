@@ -269,9 +269,37 @@ attacker never sees. Each scenario's `expected_broker` block (text from
 the broker must give, in order, which audit events must appear, and the expected
 HTTP statuses and end state. The verdict (`detected` in `results.csv`, details
 in `broker_score.jsonl`) comes from the broker's decisions and the verified
-audit log, not from the agent's answer. A2 and A4 wait for the content checks
-(F3) and are recorded as not executed; A11 needs encrypted transport (A5) and is
+audit log, not from the agent's answer. A11 needs encrypted transport (A5) and is
 not applicable; A3 needs the live model.
+
+**Content inspection (F3, `broker/content.py`).** Step 5 checks each request:
+
+- `mail.deliver` may only go to addresses that an earlier `tool.send_email_*`
+  request in the SAME trace named in `to`, `cc` or `bcc` (compared normalised);
+  a `mail.deliver` with no such request in its trace is refused too. An
+  internal email may only go to the company domain (`corp.local`). Refusal:
+  DENY `RECIPIENT_NOT_APPROVED` (A4). The approved recipients are kept per trace
+  in memory, bounded like the burst counters (900 s idle, 10,000 traces).
+- `minimum_necessary(action, payload)` says what each action may ask for. An
+  aggregate that groups or filters by a sensitive column or by a column that
+  names one person, and every `db.query_rows`, is passed to the trust engine as
+  the event `INDIVIDUAL_DATA_REQUEST` (V5); it does not decide on its own.
+
+Step 9 checks each reply: a `db.query_aggregate` reply is cut to `value` plus
+the request's own `group_by` columns (one row when there is no `group_by`); the
+cut field NAMES go to `redacted_fields`, the decision is SANITIZE
+`REPLY_SANITIZED`, and the responder's trust drops (A2). Removed values never
+reach a log, `/api/events` or the audit log. Text in any reply is also checked
+for injection phrases (the same phrases as the request check, K4); a hit lowers
+the responder's trust and never decides on its own.
+
+**Approval queue.** A request that needs a human (HITL `HITL_PENDING`) waits in
+the broker. `POST /admin/approve` (`{"approval_id", "by"?}`) sends it on through
+steps 8 and 9, with the reply check; `POST /admin/reject` closes it as
+`HITL_REJECTED`. Both need the admin token. A request that waits longer than
+600 s is closed as `HITL_TIMEOUT` when the next message arrives. The sender has
+already had its HITL reply, so the approved result is recorded on the item,
+in `/api/events` and in the audit log.
 
 **Environment variables.**
 
@@ -279,7 +307,7 @@ not applicable; A3 needs the live model.
 |---|---|---|
 | `BROKER_URL` | agents | the broker's base URL; every request goes there in broker mode |
 | `AGENT_CREDENTIALS`, `AGENT_KEYS_DIR` | agents | which credential file the agent uses, and the folder it is in |
-| `BROKER_REAL` | broker | modules that run for real, for example `identity,policy,validate,risk,trust,burst,defence,audit`; the rest are stubs (`/health` lists each function) |
+| `BROKER_REAL` | broker | modules that run for real, for example `identity,policy,validate,risk,trust,burst,defence,audit,content` (the runner's default); the rest are stubs (`/health` lists each function) |
 | `BROKER_ADMIN_TOKEN` | broker | required in `X-Admin-Token` for `/admin/*`; if it is not set, every admin call is refused |
 | `BROKER_KEYS_DIR` | broker | where the broker reads the agents' public keys (default `keys/`) |
 | `BROKER_SIGNING_KEY` | broker | the audit signing key file (default `keys/broker_signing.key`) |

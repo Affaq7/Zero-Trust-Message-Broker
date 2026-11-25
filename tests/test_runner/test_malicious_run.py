@@ -133,12 +133,11 @@ def test_a2_through_the_cli_writes_a_well_formed_row(tmp_path):
     assert int(row["sensitive_hits"]) >= 1 and row["criteria_failed"] == ""
 
 
-def test_broker_mode_records_a4_as_waiting_for_the_content_checks(tmp_path, capsys):
+def test_broker_mode_denies_a4s_extra_recipient(tmp_path):
     from runner.__main__ import main
     assert main(["--results-dir", str(tmp_path), "--mode", "broker", "--scenario", "A4"]) == 0
-    assert "A4: defined, not executed (needs the content checks (F3)" in capsys.readouterr().out
     [run] = list(tmp_path.iterdir())
     with open(run / "results.csv", encoding="utf-8", newline="") as f:
         [row] = list(csv.DictReader(f))
-    assert (row["status"], row["attack_succeeded"]) == ("not_executed", "")   # not run, not scored
-    assert "F3" in row["not_executed_reason"] and not (run / "A4").exists()
+    assert (row["status"], row["attack_succeeded"], row["detected"]) == ("completed", "false", "true")
+    assert row["broker_decision"] == "DENY:RECIPIENT_NOT_APPROVED; ALLOW:POLICY_ALLOW"   # the mail never left

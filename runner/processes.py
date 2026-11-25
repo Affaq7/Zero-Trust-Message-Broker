@@ -33,7 +33,7 @@ ISSUE_CREDENTIALS = REPO_ROOT / "scripts" / "issue_credentials.py"
 # their modules exist (they are all on main now; the check keeps older checkouts working).
 BROKER_REAL_BASE = ("identity", "policy", "risk", "trust", "burst")
 BROKER_REAL_OPTIONAL = {"validate": "broker.intercept.validate", "defence": "broker.defence.quarantine",
-                        "audit": "broker.audit.log"}
+                        "audit": "broker.audit.log", "content": "broker.content"}
 # The broker's audit signing key (A4) lives in the repo's keys/ (gitignored). The runner creates
 # it once, only when keys/broker_signing.pub does not exist, with A4's own command, which refuses
 # to overwrite. Nothing else in keys/ is ever written by the runner.

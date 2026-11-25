@@ -26,10 +26,10 @@ AGENTS = [{"name": "planner"}, {"name": "database"}]
 
 def test_default_broker_real_is_every_module_on_main(monkeypatch):
     assert default_broker_real() == ["identity", "policy", "risk", "trust", "burst",
-                                     "validate", "defence", "audit"]
+                                     "validate", "defence", "audit", "content"]
     import broker.pipeline as pipeline
     monkeypatch.setattr(pipeline, "_module_exists", lambda path: path not in (
-        "broker.intercept.validate", "broker.defence.quarantine", "broker.audit.log"))
+        "broker.intercept.validate", "broker.defence.quarantine", "broker.audit.log", "broker.content"))
     assert default_broker_real() == ["identity", "policy", "risk", "trust", "burst"]   # older checkout
 
 

@@ -32,8 +32,12 @@
     ]}
   },
   "expected_broker": {
-    "status": "pending_f3",
-    "reason": "needs the content checks (F3): not merged yet (step 9 reply cut, sanitize_reply)",
-    "expected_decision": "SANITIZE (REPLY_SANITIZED): the reply is cut to the total; individual salaries are removed"
+    "expected_decision": "SANITIZE (REPLY_SANITIZED): the reply is cut to the total; individual salaries are removed",
+    "decisions": [
+      {
+        "decision": "SANITIZE",
+        "reason_code": "REPLY_SANITIZED"
+      }
+    ]
   }
 }
