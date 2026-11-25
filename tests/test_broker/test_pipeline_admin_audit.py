@@ -221,19 +221,42 @@ def test_configure_gets_the_path_and_the_key(fake_audit, signing_key, tmp_path):
     assert path == tmp_path / "audit.jsonl" and isinstance(key, Ed25519PrivateKey)
 
 
-def test_set_registry_is_called_once_when_real_identity_is_on(monkeypatch):
+def issue_keys(tmp_path):
+    """Issue the 7 credential files into a temp folder with scripts/issue_credentials.py."""
+    import importlib.util
+    from pathlib import Path
+    script = Path(__file__).resolve().parents[2] / "scripts" / "issue_credentials.py"
+    spec = importlib.util.spec_from_file_location("issue_credentials_for_tests", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    keys = tmp_path / "run-keys"
+    module.write_set(keys, module.credential_set(), force=False)
+    return keys
+
+
+def test_set_registry_is_called_once_with_the_run_registry(monkeypatch, fake_defence, tmp_path):
+    from broker.identity.registry import AgentRegistry
     calls = []
-    install(monkeypatch, "broker.defence.revocation", set_registry=calls.append)
-    sentinel = object()
-    import broker.identity.verify as verify
-    monkeypatch.setattr(verify, "default_verifier", lambda: types.SimpleNamespace(registry=sentinel))
-    broker = make(Modules.with_real(["identity"]))
+    install(monkeypatch, "broker.defence.revocation", set_registry=calls.append,
+            revoke=lambda a: None, restore=lambda a: None)
+    keys = issue_keys(tmp_path)
+    broker = make(Modules.with_real(["identity", "policy", "defence"]),
+                  environ={"BROKER_KEYS_DIR": str(keys)})
     broker.start()
-    assert calls == [sentinel] and broker.health()["startup"]["revocation_registry"] is True
+    [registry] = calls
+    assert isinstance(registry, AgentRegistry) and registry is broker.registry
+    assert set(registry.agents()) == {"planner", "research", "database", "tool", "mailer"}
+    assert broker.health()["startup"]["revocation_registry"] is True
 
     calls.clear()
-    make(Modules.with_real(["risk"])).start()                       # identity stubbed: not called
+    make(Modules.with_real(["defence", "risk"])).start()            # identity stubbed: not called
     assert calls == []
+
+
+def test_startup_fails_clearly_without_a_registry(tmp_path):
+    broker = make(Modules.with_real(["identity"]), environ={"BROKER_KEYS_DIR": str(tmp_path / "none")})
+    with pytest.raises(BrokerStartupError, match="run scripts/issue_credentials.py"):
+        broker.start()
 
 
 # --- 2. defence manager ------------------------------------------------------------------------------
@@ -337,3 +360,67 @@ def test_no_admin_token_configured_refuses_every_admin_call(fake_defence):
     assert client.get("/health").json()["admin"] == "disabled"
     r = admin_client(broker, token=None, header="").post("/admin/release", json={"agent": "planner", "reviewer": "afaq"})
     assert r.status_code == 403
+
+
+# --- F2-A: /admin/revoke and /admin/restore ---------------------------------------------------
+
+@pytest.mark.parametrize("route", ["/admin/revoke", "/admin/restore"])
+def test_revoke_restore_need_the_admin_token(route):
+    broker = make(Modules())
+    before = len(stubs.revocations)
+    assert admin_client(broker, header=None).post(route, json={"agent": "tool"}).status_code == 401
+    assert admin_client(broker, header="wrong").post(route, json={"agent": "tool"}).status_code == 401
+    assert admin_client(broker, token=None, header="x").post(route, json={"agent": "tool"}).status_code == 403
+    assert len(stubs.revocations) == before                           # nothing was revoked or restored
+    assert all(e["kind"] == "admin_refused" for e in broker.recent_events(3))
+    assert ADMIN not in str(broker.recent_events(10))
+
+
+@pytest.mark.parametrize("route, body", [("/admin/revoke", {"agent": "nobody"}), ("/admin/revoke", {}),
+                                         ("/admin/restore", {"agent": ""}), ("/admin/restore", {"by": "x"})])
+def test_revoke_restore_bad_requests_are_400(route, body):
+    r = admin_client(make(Modules())).post(route, json=body)
+    assert r.status_code == 400
+
+
+def test_revoke_restore_failures_are_400_never_500():
+    def broken(agent):
+        raise RuntimeError("no registry set")
+
+    broker = make(Modules(revoke=broken))
+    r = admin_client(broker).post("/admin/revoke", json={"agent": "tool"})
+    assert r.status_code == 400 and broker.recent_events(1)[0]["kind"] == "revoke_refused"
+
+
+def test_revoke_restore_with_stubs_are_recorded_and_audited():
+    audit = FakeAudit()
+    broker = make(Modules(append=audit.append))
+    client = admin_client(broker)
+    before = len(stubs.revocations)
+    r = client.post("/admin/revoke", json={"agent": "tool", "by": "amna"})
+    assert r.status_code == 200 and r.json()["real"] is False and r.json()["done"] == "revoke"
+    assert client.post("/admin/restore", json={"agent": "tool"}).status_code == 200
+    assert stubs.revocations[before:] == [("revoke", "tool"), ("restore", "tool")]
+    assert [(e["kind"], e["agent"], e["by"]) for e in audit.entries] == [("revoke", "tool", "amna"),
+                                                                         ("restore", "tool", "admin")]
+    assert [e["kind"] for e in client.get("/api/events").json()["events"][:2]] == ["restore", "revoke"]
+
+
+def test_revoke_restore_with_the_pr8_interface_change_the_run_registry(monkeypatch, fake_defence, tmp_path):
+    state = {}
+
+    def set_registry(registry):
+        state["registry"] = registry
+
+    install(monkeypatch, "broker.defence.revocation", set_registry=set_registry,
+            revoke=lambda agent: state["registry"].revoke(agent),
+            restore=lambda agent: state["registry"].restore(agent))
+    keys = issue_keys(tmp_path)
+    broker = make(Modules.with_real(["identity", "policy", "defence"]), environ={"BROKER_KEYS_DIR": str(keys)})
+    broker.start()
+    client = admin_client(broker)
+    r = client.post("/admin/revoke", json={"agent": "tool", "by": "kissa"})
+    assert r.status_code == 200 and r.json() == {"agent": "tool", "done": "revoke", "by": "kissa",
+                                                      "real": True, "status": "revoked", "epoch": 1}
+    r = client.post("/admin/restore", json={"agent": "tool", "by": "kissa"})
+    assert r.json()["status"] == "active" and r.json()["epoch"] == 1        # epoch kept: old tokens stay stale

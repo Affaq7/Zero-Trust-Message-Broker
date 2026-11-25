@@ -34,6 +34,10 @@ class Settings:
     # Role claimed in this process's stub tokens. Default: AGENT_NAME when it
     # is a catalog role; required otherwise (e.g. for "malicious", Q2).
     agent_role: str | None = None
+    # MODE=broker only: where send_message() posts every request (the broker's base URL),
+    # and whether /message refuses requests without a valid broker signature (A5, default off).
+    broker_url: str | None = None
+    require_broker_signature: bool = False
 
     @property
     def impl(self) -> str:
@@ -64,8 +68,19 @@ def load_settings(environ: Mapping[str, str] = os.environ) -> Settings:
     if not agent_name:
         raise ConfigError("AGENT_NAME is not set")
     log_dir = environ.get("LOG_DIR", "").strip()
+    broker_url = environ.get("BROKER_URL", "").strip() or None
+    if broker_url is not None:
+        parts = urlsplit(broker_url)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            raise ConfigError(f"BROKER_URL needs an http(s) URL, got {broker_url!r}")
+        broker_url = broker_url.rstrip("/")
+    flag = environ.get("REQUIRE_BROKER_SIGNATURE", "").strip().lower()
+    if flag not in ("", "0", "1", "false", "true", "no", "yes", "off", "on"):
+        raise ConfigError(f"REQUIRE_BROKER_SIGNATURE must be 1 or 0, got {flag!r}")
     return Settings(mode=mode, agent_name=agent_name,
                     log_dir=Path(log_dir) if log_dir else DEFAULT_LOG_DIR,
                     agent_urls=parse_agent_urls(environ.get("AGENT_URLS", "")),
                     agent_impl=environ.get("AGENT_IMPL", "").strip() or None,
-                    agent_role=environ.get("AGENT_ROLE", "").strip() or None)
+                    agent_role=environ.get("AGENT_ROLE", "").strip() or None,
+                    broker_url=broker_url,
+                    require_broker_signature=flag in ("1", "true", "yes", "on"))

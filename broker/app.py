@@ -6,6 +6,8 @@
     GET  /api/state      counters, agents (T, state, epoch), pending approvals
     GET  /api/events     recent decisions and defence events (newest first)
     POST /admin/release  {"agent", "reviewer"}; header X-Admin-Token required
+    POST /admin/revoke   {"agent", "by"?}: registry revoke (epoch + 1); X-Admin-Token required
+    POST /admin/restore  {"agent", "by"?}: registry restore; X-Admin-Token required
 
 Admin routes need the header X-Admin-Token equal to BROKER_ADMIN_TOKEN (compared in
 constant time). If BROKER_ADMIN_TOKEN is not set, every admin call is refused (fail
@@ -37,6 +39,13 @@ ADMIN_ENV_VAR = "BROKER_ADMIN_TOKEN"
 class ReleaseRequest(BaseModel):
     agent: str = Field(min_length=1, max_length=128)
     reviewer: str = Field(min_length=1, max_length=128)
+
+
+class AgentRequest(BaseModel):
+    """Body of /admin/revoke and /admin/restore. ``by`` names the operator for the audit log."""
+
+    agent: str = Field(min_length=1, max_length=128)
+    by: str = Field(default="admin", min_length=1, max_length=128)
 
 
 def _error(status: int, message: str) -> JSONResponse:
@@ -119,6 +128,36 @@ def create_app(broker: Broker | None = None, environ: Mapping[str, str] = os.env
                                outcome=f"400 {type(exc).__name__}")
             return _error(400, "release failed")
         return JSONResponse(result, status_code=200)
+
+    async def registry_change(request: Request, kind: str) -> JSONResponse:
+        route = f"/admin/{kind}"
+        refusal = admin_refusal(request, route)
+        if refusal is not None:
+            return refusal
+        try:
+            req = AgentRequest.model_validate_json(await request.body())
+        except ValidationError:
+            broker.admin_event(f"{kind}_refused", outcome="400 bad body")
+            return _error(400, 'body must be {"agent": "..."} (optional "by")')
+        change = broker.revoke if kind == "revoke" else broker.restore
+        try:
+            result = await run_in_threadpool(change, req.agent, req.by)
+        except UnknownAgentError:
+            broker.admin_event(f"{kind}_refused", agent=req.agent, by=req.by, outcome="400 unknown agent")
+            return _error(400, f"unknown agent {req.agent!r}")
+        except Exception as exc:  # noqa: BLE001 - never a 500 from an admin route
+            broker.admin_event(f"{kind}_refused", agent=req.agent, by=req.by,
+                               outcome=f"400 {type(exc).__name__}")
+            return _error(400, f"{kind} failed for {req.agent!r}")
+        return JSONResponse(result, status_code=200)
+
+    @app.post("/admin/revoke")
+    async def revoke(request: Request) -> JSONResponse:
+        return await registry_change(request, "revoke")
+
+    @app.post("/admin/restore")
+    async def restore(request: Request) -> JSONResponse:
+        return await registry_change(request, "restore")
 
     return app
 

@@ -147,9 +147,9 @@ def test_agent_failure_becomes_error_response(monkeypatch):
 
 # --- broker mode ---------------------------------------------------------------
 
-def test_broker_mode_returns_501():
+def test_broker_mode_handles_a_forwarded_request_like_direct_mode():
     r = post(client(mode="broker"), request_dict())
-    assert r.status_code == 501
+    assert r.status_code == 200 and r.json()["msg_type"] == "response"
     assert client(mode="broker").get("/health").json()["mode"] == "broker"
 
 
