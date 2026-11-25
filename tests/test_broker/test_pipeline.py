@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from broker import stubs
 from broker.app import create_app
 from broker.identity.verify import IdentityResult
-from broker.pipeline import REAL_MODULES, Broker, Modules
+from broker.pipeline import FUNCTIONS, GROUPS, Broker, Modules
 from broker.policy.engine import PolicyResult
 from broker.trust.trust import TrustState
 from contracts import Envelope, new_request
@@ -189,7 +189,8 @@ def test_request_cue_and_burst_events_reach_the_trust_engine():
 
 def test_quarantine_path_and_release():
     broker, receiver = make_broker()
-    client = TestClient(create_app(broker))
+    client = TestClient(create_app(broker, environ={"BROKER_ADMIN_TOKEN": "admin-placeholder"}))
+    client.headers["X-Admin-Token"] = "admin-placeholder"
     broker.modules.defence.revoke("planner")
     r = client.post("/message", json=raw(n1_request()))
     assert r.status_code == 200 and r.json()["decision"] == "QUARANTINE"
@@ -201,15 +202,17 @@ def test_quarantine_path_and_release():
     assert broker.modules.trust.releases == [("planner", "afaq")]
     r = client.post("/message", json=raw(n1_request()))
     assert r.json()["decision"] == "ALLOW" and len(receiver.calls) == 1
-    assert client.post("/admin/release", json={"agent": "planner", "reviewer": ""}).status_code == 422
+    assert client.post("/admin/release", json={"agent": "planner", "reviewer": ""}).status_code == 400
 
 
 def test_a_denial_that_trips_the_denial_rate_becomes_quarantine():
-    class V1(stubs.DefenceManager):              # blocks on the second DENY
+    class V1(stubs.DefenceManager):              # quarantines on the second DENY, logging it as PR #8 does
         def record_decision(self, agent, decision, ts):
             super().record_decision(agent, decision, ts)
-            if sum(1 for a, d, _ in self.decisions if a == agent and d == "DENY") >= 2:
+            if sum(1 for a, d, _ in self.decisions if a == agent and d == "DENY") == 2:
                 self.blocked.add(agent)
+                self._log.append({"event": "quarantine", "agent": agent, "reason": "DENIAL_RATE_EXCEEDED",
+                                  "ts": ts, "denials": [ts, ts]})
 
     broker, receiver = make_broker(Modules(defence=V1(), evaluate_policy=_deny_policy))
     first = broker.handle(raw(n1_request()), HEADERS)
@@ -357,9 +360,10 @@ def test_unknown_receiver_url_is_a_forward_failure():
 # --- module registry --------------------------------------------------------------------------------
 
 def test_default_modules_are_all_stubs_and_broker_real_switches_and_ignores():
-    assert set(Modules().status.values()) == {"stub"} and set(Modules().status) == set(REAL_MODULES)
+    assert set(Modules().status.values()) == {"stub"} and set(Modules().status) == set(FUNCTIONS)
     mods = Modules.from_env({"BROKER_REAL": "risk, trust, burst, validate, nonsense"})
-    assert {n for n, s in mods.status.items() if s == "real"} == {"risk", "trust", "burst"}
+    assert {n for n, s in mods.status.items() if s == "real"} == {"risk_vector", "required_trust",
+                                                                  "TrustEngine", "BurstDetector"}
     assert set(mods.ignored) == {"validate", "nonsense"}
     assert "does not exist" in mods.ignored["validate"]
 
@@ -381,8 +385,10 @@ def test_health_state_and_events_shapes():
 
     health = client.get("/health").json()
     assert health["status"] == "ok" and health["service"] == "broker"
-    assert health["real"] == ["risk"] and "identity" in health["stubbed"] and "validate" in health["ignored"]
-    assert set(health["modules"]) == set(REAL_MODULES)
+    assert health["real"] == ["required_trust", "risk_vector"] and "verify_identity" in health["stubbed"]
+    assert "validate" in health["ignored"] and health["modules"]["risk"] == "real"
+    assert set(health["modules"]) == set(GROUPS) and set(health["functions"]) == set(FUNCTIONS)
+    assert health["admin"] == "disabled" and health["startup"]["started"] is True
 
     state = client.get("/api/state").json()
     assert set(state) == {"counters", "agents", "pending_approvals"}

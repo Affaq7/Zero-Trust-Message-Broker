@@ -15,23 +15,28 @@ Steps, in this order:
 A refusal is a response envelope with HTTP 200: decision, reason_code, payload
 {"status": "denied"}, and it is never forwarded. needs_human puts the request on
 the pending-approval list and answers HITL (the real queue is F3). Every message,
-even one that cannot be parsed, gets an audit entry and an event record; neither
-ever holds a payload, a header or a token.
+even one that cannot be parsed, gets one audit entry (field names of
+docs/audit-log-examples.md, A4) and an event record; neither ever holds a payload
+(only its hash), a header or a token. The defence manager's own events
+(quarantine, release) are appended to the audit log as they happen.
 
-Which implementation runs for each module is decided in one place, Modules: all
-stubs by default; BROKER_REAL="identity,policy,..." switches named modules to the
-real ones, imported lazily. A name whose module is not on this branch yet is
-ignored and listed in /health.
+Which implementation runs is decided per function in one place, Modules: all stubs
+by default; BROKER_REAL="identity,policy,audit,..." switches the named groups to the
+real modules, function by function, imported lazily. A function whose module or
+attribute is not on this branch yet stays a stub and is listed in /health.
 
 Direct mode is untouched: nothing here is imported by wrapper/, agents/ or runner/.
 """
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 import importlib.util
+import json
 import logging
 import os
+import sys
 import threading
 import time
 import uuid
@@ -39,6 +44,7 @@ from collections import Counter, deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -51,120 +57,141 @@ from contracts.version import SCHEMA_VERSION
 
 log = logging.getLogger("broker")
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_SIGNING_KEY = REPO_ROOT / "keys" / "broker_signing.key"
+SIGNING_KEY_HINT = "python -m broker.audit.signing_key create"
+
 DECISIONS = ("ALLOW", "SANITIZE", "HITL", "DENY", "QUARANTINE")
 # Event codes the trust engine accepts (docs/detection-design.md section 4).
 TRUST_EVENTS = ("INJECTION_CUE", "BURST_DETECTED", "INDIVIDUAL_DATA_REQUEST", "REPLY_SANITIZED")
+# A3 event kinds the audit log accepts (PR #9, broker/audit/log.py EVENT_KINDS).
+AUDIT_EVENT_KINDS = ("quarantine", "release", "revoke", "restore")
 DENIED_PAYLOAD = {"status": "denied"}
 PENDING_PAYLOAD = {"status": "pending"}
 DEFAULT_FORWARD_TIMEOUT_S = 60.0
 MAX_EVENTS = 1000
 
 
-# --- module registry ----------------------------------------------------------------------
-
-def _real_validate(m):
-    return {"validate_envelope": m.validate_envelope}
+class BrokerStartupError(RuntimeError):
+    """The broker cannot start with the chosen real modules (message says how to fix it)."""
 
 
-def _real_identity(m):
-    return {"verify_identity": m.verify_identity}
+class UnknownAgentError(ValueError):
+    """/admin/release named an agent the broker does not know."""
 
 
-def _real_defence(m):
-    return {"defence": m.DefenceManager()}
+# --- module registry, per function ----------------------------------------------------------
 
-
-def _real_policy(m):
-    return {"evaluate_policy": m.evaluate_policy}
-
-
-def _real_risk(m):
-    return {"risk_vector": m.risk_vector, "required_trust": m.required_trust}
-
-
-def _real_trust(m):
-    return {"trust": m.TrustEngine()}
-
-
-def _real_burst(m):
-    return {"burst": m.BurstDetector()}
-
-
-def _real_content(m):
-    return {"check_request_content": m.check_request_content, "sanitize_reply": m.sanitize_reply}
-
-
-def _real_audit(m):
-    return {"append": m.append, "sign_decision": m.sign_decision}
-
-
-# name -> (real module path, loader). Paths of modules that are not built yet are the
-# planned ones; F3's content module path is a placeholder until F3 starts.
-REAL_MODULES: dict[str, tuple[str, Callable[[Any], dict]]] = {
-    "validate": ("broker.intercept.validate", _real_validate),
-    "identity": ("broker.identity.verify", _real_identity),
-    "defence": ("broker.defence.quarantine", _real_defence),
-    "policy": ("broker.policy.engine", _real_policy),
-    "risk": ("broker.trust.risk", _real_risk),
-    "trust": ("broker.trust.trust", _real_trust),
-    "burst": ("broker.trust.rules", _real_burst),
-    "content": ("broker.content", _real_content),
-    "audit": ("broker.audit.log", _real_audit),
+# group name (as written in BROKER_REAL) -> (real module path, functions or classes it provides).
+# Paths of modules not on main yet are the documented ones: validate (Kissa K4), defence
+# (PR #8), audit (PR #9), signing (A5, stretch), content (F3, placeholder path).
+GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "validate": ("broker.intercept.validate", ("validate_envelope",)),
+    "identity": ("broker.identity.verify", ("verify_identity",)),
+    "defence": ("broker.defence.quarantine", ("DefenceManager",)),
+    "policy": ("broker.policy.engine", ("evaluate_policy",)),
+    "risk": ("broker.trust.risk", ("risk_vector", "required_trust")),
+    "trust": ("broker.trust.trust", ("TrustEngine",)),
+    "burst": ("broker.trust.rules", ("BurstDetector",)),
+    "content": ("broker.content", ("check_request_content", "sanitize_reply")),
+    "audit": ("broker.audit.log", ("append", "configure")),
+    "signing": ("broker.transport.signing", ("sign_decision",)),
 }
+FUNCTIONS: tuple[str, ...] = tuple(f for _, fns in GROUPS.values() for f in fns)
+REVOCATION_MODULE = "broker.defence.revocation"     # PR #8: set_registry(), revoke(), restore()
 
 
 def _module_exists(path: str) -> bool:
+    if path in sys.modules:
+        return sys.modules[path] is not None
     try:
         return importlib.util.find_spec(path) is not None
-    except ModuleNotFoundError:        # a parent package is missing
+    except (ModuleNotFoundError, ValueError):        # a parent package is missing
         return False
 
 
 @dataclass
 class Modules:
-    """The one place that says which implementation each pipeline step uses."""
+    """The one place that says which implementation each pipeline function uses.
+
+    Classes (TrustEngine, DefenceManager, BurstDetector) are instantiated once: the
+    defence manager gets the shared trust engine (PR #8: DefenceManager(trust=...)).
+    Tests may pass ready instances instead.
+    """
 
     validate_envelope: Callable = stubs.validate_envelope
     verify_identity: Callable = stubs.verify_identity
-    defence: Any = field(default_factory=stubs.DefenceManager)
     evaluate_policy: Callable = stubs.evaluate_policy
     risk_vector: Callable = stubs.risk_vector
     required_trust: Callable = stubs.required_trust
-    trust: Any = field(default_factory=stubs.TrustEngine)
-    burst: Any = field(default_factory=stubs.BurstDetector)
     check_request_content: Callable = stubs.check_request_content
     sanitize_reply: Callable = stubs.sanitize_reply
-    append: Callable = field(default_factory=lambda: stubs.AuditLog().append)
+    append: Callable | None = None                 # None: a fresh in-memory stub audit log
+    configure: Callable | None = None              # real audit only
     sign_decision: Callable = stubs.sign_decision
-    status: dict[str, str] = field(default_factory=lambda: {name: "stub" for name in REAL_MODULES})
+    TrustEngine: type = stubs.TrustEngine
+    DefenceManager: type = stubs.DefenceManager
+    BurstDetector: type = stubs.BurstDetector
+    trust: Any = None
+    defence: Any = None
+    burst: Any = None
+    status: dict[str, str] = field(default_factory=lambda: {f: "stub" for f in FUNCTIONS})
     ignored: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.trust is None:
+            self.trust = self.TrustEngine()
+        if self.defence is None:
+            self.defence = self.DefenceManager(trust=self.trust)
+        if self.burst is None:
+            self.burst = self.BurstDetector()
+        if self.append is None:
+            self.append = stubs.AuditLog().append
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] = os.environ) -> "Modules":
-        """All stubs, then each name in BROKER_REAL switched to its real module."""
+        """All stubs, then each group named in BROKER_REAL switched to its real module."""
         names = [n.strip() for n in environ.get("BROKER_REAL", "").split(",") if n.strip()]
         return cls.with_real(names)
 
     @classmethod
     def with_real(cls, names: list[str]) -> "Modules":
-        mods = cls()
+        found: dict[str, Any] = {}
+        ignored: dict[str, str] = {}
         for name in names:
-            if name not in REAL_MODULES:
-                mods.ignored[name] = "unknown module name"
+            if name not in GROUPS:
+                ignored[name] = "unknown module name"
                 continue
-            path, loader = REAL_MODULES[name]
+            path, functions = GROUPS[name]
             if not _module_exists(path):
-                mods.ignored[name] = f"{path} does not exist on this branch yet; using the stub"
+                ignored[name] = f"{path} does not exist on this branch yet; using the stub"
                 continue
             try:
-                parts = loader(importlib.import_module(path))
+                module = importlib.import_module(path)
             except Exception as exc:  # noqa: BLE001 - a broken real module must not stop the broker
-                mods.ignored[name] = f"{path} could not be loaded ({type(exc).__name__}); using the stub"
+                ignored[name] = f"{path} could not be imported ({type(exc).__name__}); using the stub"
                 continue
-            for attr, value in parts.items():
-                setattr(mods, attr, value)
-            mods.status[name] = "real"
+            for fn in functions:
+                value = getattr(module, fn, None)
+                if value is None:
+                    ignored[f"{name}.{fn}"] = f"{path} has no {fn}; using the stub"
+                else:
+                    found[fn] = value
+        mods = cls(**found)
+        mods.ignored = ignored
+        for fn in found:
+            mods.status[fn] = "real"
         return mods
+
+    def is_real(self, fn: str) -> bool:
+        return self.status.get(fn) == "real"
+
+    def group_status(self) -> dict[str, str]:
+        out = {}
+        for name, (_, functions) in GROUPS.items():
+            real = [self.is_real(f) for f in functions]
+            out[name] = "real" if all(real) else "stub" if not any(real) else "partial"
+        return out
 
 
 # --- the pipeline ---------------------------------------------------------------------------
@@ -180,10 +207,13 @@ class _Trace:
     raw_sender: str | None = None
     raw_msg_id: str | None = None
     env: Envelope | None = None
+    identity: Any = None
     agent: str | None = None
     step: int = 0
     decision: str | None = None
     reason_code: str | None = None
+    risk: dict | None = None
+    trust: dict | None = None
     events: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     redacted_fields: list[str] = field(default_factory=list)
@@ -191,11 +221,24 @@ class _Trace:
 
 
 def _iso(ts: float) -> str:
-    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="milliseconds")
 
 
 def _id_or(value: Any, default: str | None) -> str | None:
     return value if isinstance(value, str) and 0 < len(value) <= 128 else default
+
+
+def _payload_hash(payload: Any) -> str:
+    """SHA-256 of the canonical JSON payload, as A4's payload_hash()."""
+    body = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def _trust_view(before, after) -> dict | None:
+    if before is None or after is None:
+        return None
+    return {"T_before": float(before.T), "T_after": float(after.T),
+            "state_before": before.state, "state_after": after.state}
 
 
 class Broker:
@@ -217,6 +260,42 @@ class Broker:
         self.pending: dict[str, dict] = {}       # approval_id -> metadata (F3 adds the queue)
         self._pending_envs: dict[str, Envelope] = {}
         self._epochs: dict[str, int | None] = {}
+        self._defence_seen = 0                   # how many DefenceManager.log() events are audited
+        self.startup: dict[str, Any] = {"started": False, "audit_configured": False,
+                                        "revocation_registry": False}
+
+    # --- startup ----------------------------------------------------------------------------
+
+    def start(self, signing_key_path: Path | None = None, audit_log_path: Path | None = None) -> None:
+        """Once, before the first message: configure the real audit log and give the real
+        revocation module the identity registry. Raises BrokerStartupError with a fix."""
+        M = self.modules
+        if M.is_real("configure"):
+            key_path = Path(signing_key_path or DEFAULT_SIGNING_KEY)
+            if not key_path.is_file():
+                raise BrokerStartupError(
+                    f"real audit is on (BROKER_REAL includes audit) but the broker signing key "
+                    f"keys/{key_path.name} is missing: run {SIGNING_KEY_HINT}")
+            from broker.identity.keys import private_key_from_text
+            try:
+                key = private_key_from_text(key_path.read_text(encoding="utf-8").strip())
+            except Exception as exc:  # noqa: BLE001
+                raise BrokerStartupError(f"keys/{key_path.name} is not a valid signing key "
+                                         f"({type(exc).__name__})") from None
+            M.configure(audit_log_path, key)
+            self.startup["audit_configured"] = True
+        elif M.is_real("append"):
+            raise BrokerStartupError("real audit append without configure(): check broker/audit/log.py")
+        if M.is_real("verify_identity") and _module_exists(REVOCATION_MODULE):
+            from broker.identity import verify as identity_verify
+            try:
+                registry = identity_verify.default_verifier().registry
+            except Exception as exc:  # noqa: BLE001
+                raise BrokerStartupError(f"real identity is on but the registry could not be loaded "
+                                         f"({type(exc).__name__}: {exc}); run scripts/issue_credentials.py")
+            importlib.import_module(REVOCATION_MODULE).set_registry(registry)
+            self.startup["revocation_registry"] = True
+        self.startup["started"] = True
 
     # --- entry point ------------------------------------------------------------------
 
@@ -258,8 +337,9 @@ class Broker:
             tr.events.append("INJECTION_CUE")
 
         tr.step = 2                                                     # 2 identity
-        ident = M.verify_identity(headers, env)
+        ident = tr.identity = M.verify_identity(headers, env)
         if not ident.ok or not ident.agent:
+            # Not verified: never counted against the claimed sender (V1, trust).
             return self._stop(raw, tr, "DENY", ident.reason_code or "UNKNOWN_AGENT")
         agent = tr.agent = ident.agent
 
@@ -268,6 +348,8 @@ class Broker:
 
             tr.step = 3                                                 # 3 quarantine
             if M.defence.is_blocked(agent) or M.trust.get(agent).state == "Quarantined":
+                state = M.trust.get(agent)
+                tr.trust = _trust_view(state, state)
                 M.defence.record_decision(agent, "QUARANTINE", now)
                 return self._stop(raw, tr, "QUARANTINE", "AGENT_QUARANTINED")
 
@@ -277,7 +359,7 @@ class Broker:
 
             tr.step = 4                                                 # 4 policy
             policy = M.evaluate_policy(env, ident)
-            risk = M.risk_vector(env.action)
+            risk = tr.risk = M.risk_vector(env.action)
             if policy.verdict != "ALLOW":
                 return self._settle(raw, tr, "DENY", policy.reason_code, risk, request_cue, now)
 
@@ -340,14 +422,26 @@ class Broker:
         """Record a decision for a verified sender (trust, V1) and build a refusal if needed.
 
         Count once: one trust update per message, whatever the reason. A DENY that makes
-        the defence manager block the agent (V1, 5 in 60 s) becomes QUARANTINE.
+        the defence manager quarantine the agent (V1, a new "quarantine" event in its log)
+        becomes QUARANTINE DENIAL_RATE_EXCEEDED.
         """
         M = self.modules
         agent = tr.agent
-        M.trust.update(agent, decision, risk, cue, events=list(tr.events))
+        before = M.trust.get(agent)
+        after = M.trust.update(agent, decision, risk, cue, events=list(tr.events))
+        tr.trust = _trust_view(before, after)
+        has_log = callable(getattr(M.defence, "log", None))
+        n_before = len(M.defence.log()) if has_log else 0
+        was_blocked = M.defence.is_blocked(agent)
         M.defence.record_decision(agent, decision, now)
-        if decision == "DENY" and M.defence.is_blocked(agent):
-            decision, reason = "QUARANTINE", "DENIAL_RATE_EXCEEDED"
+        if decision == "DENY":
+            if has_log:
+                tripped = any(e.get("event") == "quarantine" and e.get("agent") == agent
+                              for e in M.defence.log()[n_before:])
+            else:
+                tripped = not was_blocked and M.defence.is_blocked(agent)
+            if tripped:
+                decision, reason = "QUARANTINE", "DENIAL_RATE_EXCEEDED"
         tr.decision, tr.reason_code = decision, reason
         return self._refusal(raw, tr.env, decision, reason)
 
@@ -420,54 +514,98 @@ class Broker:
             payload=payload, delegation_chain=["user"], timestamp=utc_now(),
             decision=decision, reason_code=reason)
 
-    def _finish(self, reply: Envelope, tr: _Trace) -> Envelope:
-        """Step 10: sign the reply, write the audit entry and the event record."""
-        M = self.modules
-        tr.decision = tr.decision or reply.decision
-        tr.reason_code = reply.reason_code
-        signed = reply.model_copy(update={"broker_signature": M.sign_decision(reply)})
+    def _audit_entry(self, reply: Envelope, tr: _Trace, ts: str) -> dict:
+        """One decision line in A4's field names. For a message that could not be parsed the
+        required ids come from the broker's own refusal (A4 refuses a line without them)."""
         env = tr.env
-        entry = {
-            "ts": _iso(self._clock()),
-            "msg_id": env.msg_id if env else tr.raw_msg_id,
-            "trace_id": env.trace_id if env else None,
-            "sender": env.sender if env else tr.raw_sender,
-            "verified_agent": tr.agent,
-            "receiver": env.receiver if env else None,
-            "action": env.action if env else None,
-            "step": tr.step,
+        risk = tr.risk
+        return {
+            "kind": "decision",
+            "ts": ts,
+            "trace_id": env.trace_id if env else reply.trace_id,
+            "msg_id": env.msg_id if env else (tr.raw_msg_id or f"unparsed:{reply.msg_id}"),
+            "parent_msg_id": env.parent_msg_id if env else None,
+            "msg_type": env.msg_type if env else None,
+            "sender": env.sender if env else (tr.raw_sender or "unknown"),
+            "receiver": env.receiver if env else reply.sender,
+            "action": env.action if env else reply.action,
+            "resource": env.resource if env else None,
+            "payload_hash": _payload_hash(env.payload) if env else None,
+            "identity": tr.identity.model_dump(mode="json") if tr.identity is not None else None,
+            "trust": tr.trust,
+            "risk": dict(risk) if risk is not None else None,
+            "compound_high": (sum(1 for v in risk.values() if v == "H") >= 2) if risk is not None else None,
             "decision": reply.decision,
             "reason_code": reply.reason_code,
             "events": list(tr.events),
-            "notes": list(tr.notes),
-            "redacted_fields": list(tr.redacted_fields),
-            "forwarded": tr.forwarded,
-            "reply_msg_id": signed.msg_id,
+            "redacted_fields": list(tr.redacted_fields) or None,
         }
+
+    def _finish(self, reply: Envelope, tr: _Trace) -> Envelope:
+        """Step 10: sign the reply, append the audit line, record the event, audit defence events."""
+        M = self.modules
+        signed = reply.model_copy(update={"broker_signature": M.sign_decision(reply)})
+        ts = _iso(self._clock())
+        entry = self._audit_entry(reply, tr, ts)
         with self._lock:
             entry_hash = M.append(entry)
-            self.events.append({**entry, "entry_hash": entry_hash})
+            self.events.append({
+                "kind": "decision", "ts": ts, "msg_id": entry["msg_id"], "trace_id": entry["trace_id"],
+                "sender": entry["sender"], "verified_agent": tr.agent, "receiver": entry["receiver"],
+                "action": entry["action"], "step": tr.step, "decision": reply.decision,
+                "reason_code": reply.reason_code, "events": list(tr.events), "notes": list(tr.notes),
+                "redacted_fields": list(tr.redacted_fields), "forwarded": tr.forwarded,
+                "reply_msg_id": signed.msg_id, "entry_hash": entry_hash,
+            })
             self.counters["messages"] += 1
             self.counters[f"decision:{reply.decision}"] += 1
             if tr.forwarded:
                 self.counters["forwarded"] += 1
+            self._audit_defence_events()
         return signed
 
-    # --- views for the app ---------------------------------------------------------------------
+    def _audit_defence_events(self) -> None:
+        """Append the defence manager's new events (quarantine, release) to the audit log."""
+        get_log = getattr(self.modules.defence, "log", None)
+        if not callable(get_log):
+            return
+        entries = get_log()
+        new, self._defence_seen = entries[self._defence_seen:], len(entries)
+        for e in new:
+            kind = e.get("event")
+            raw_ts = e.get("ts")
+            ts = _iso(raw_ts) if isinstance(raw_ts, (int, float)) else _iso(self._clock())
+            entry = {"kind": kind, "ts": ts, "agent": e.get("agent"),
+                     "by": e.get("reviewer") or e.get("by") or "broker",
+                     "reason_code": e.get("reason"), "denials": e.get("denials")}
+            entry_hash = self.modules.append(entry) if kind in AUDIT_EVENT_KINDS else None
+            self.events.append({**entry, "entry_hash": entry_hash})
+
+    def admin_event(self, kind: str, **fields: Any) -> None:
+        """An admin call that changed nothing (refused): event list only, never secrets."""
+        with self._lock:
+            self.events.append({"kind": kind, "ts": _iso(self._clock()), **fields})
+
+    # --- views and admin ---------------------------------------------------------------------
 
     def health(self) -> dict:
+        functions = dict(self.modules.status)
         return {"status": "ok", "service": "broker",
-                "modules": dict(self.modules.status),
-                "stubbed": sorted(n for n, s in self.modules.status.items() if s == "stub"),
-                "real": sorted(n for n, s in self.modules.status.items() if s == "real"),
-                "ignored": dict(self.modules.ignored)}
+                "modules": self.modules.group_status(),
+                "functions": functions,
+                "real": sorted(f for f, s in functions.items() if s == "real"),
+                "stubbed": sorted(f for f, s in functions.items() if s == "stub"),
+                "ignored": dict(self.modules.ignored),
+                "startup": dict(self.startup)}
+
+    def known_agents(self) -> list[str]:
+        catalog = get_catalog()
+        return list(dict.fromkeys([*catalog.roles, *catalog.agents, *sorted(self._epochs)]))
 
     def state(self) -> dict:
         with self._lock:
-            seen = set(self._epochs)
-            names = list(get_catalog().roles) + sorted(seen - set(get_catalog().roles))
             agents = []
-            for name in names:
+            for name in self.known_agents():
                 ts = self.modules.trust.get(name)
                 agents.append({"agent": name, "T": round(float(ts.T), 4), "state": ts.state,
                                "epoch": self._epochs.get(name),
@@ -485,18 +623,17 @@ class Broker:
             return list(self.events)[-limit:][::-1]
 
     def release(self, agent: str, reviewer: str) -> dict:
-        """Authorised release of a quarantined agent (trust engine; defence too if it can)."""
+        """Authorised release through the defence manager (PR #8), which also restores trust.
+
+        Raises UnknownAgentError, PermissionError (reviewer not allowed) or ValueError
+        (agent not quarantined); the app turns them into 400 / 403 / 400.
+        """
+        if agent not in self.known_agents():
+            raise UnknownAgentError(f"unknown agent {agent!r}")
         with self._lock:
-            state = self.modules.trust.release(agent, reviewer)
-            undo = getattr(self.modules.defence, "release", None)
-            if callable(undo):
-                undo(agent)
-            elif hasattr(self.modules.defence, "blocked"):
-                self.modules.defence.blocked.discard(agent)      # the stub's block list
-            entry = {"ts": _iso(self._clock()), "event": "release", "agent": agent, "reviewer": reviewer,
-                     "T": float(state.T), "state": state.state}
-            entry_hash = self.modules.append(entry)
-            self.events.append({**entry, "entry_hash": entry_hash})
+            self.modules.defence.release(agent, reviewer, ts=self._clock())
+            self._audit_defence_events()
+            state = self.modules.trust.get(agent)
         return {"agent": agent, "T": float(state.T), "state": state.state, "released_by": reviewer}
 
 
