@@ -208,3 +208,62 @@ def test_real_audit_log_verifies_and_a_one_byte_edit_fails_at_that_line(real_aud
     log_path.write_bytes(bytes(data))
     r = verify_chain(log_path, key.public_key())
     assert (r.ok, r.bad_line) == (False, 3)
+
+
+# --- /admin/revoke and /admin/restore with the real revocation, registry, verifier and audit -------
+
+def test_revoke_then_restore_leaves_old_tokens_stale_and_both_are_audited(real_audit, tmp_path):
+    import importlib.util
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+
+    import broker.defence.revocation as revocation
+    from broker.app import create_app
+    from broker.audit.verify import verify_chain
+    from broker.identity.client import make_proof
+    from wrapper.credentials import FileCredentials
+
+    key, key_path, log_path = real_audit
+    script = Path(__file__).resolve().parents[2] / "scripts" / "issue_credentials.py"
+    spec = importlib.util.spec_from_file_location("issue_credentials_for_revoke", script)
+    issue = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(issue)
+    keys = tmp_path / "run-keys"
+    issue.write_set(keys, issue.credential_set(), force=False)
+    planner = FileCredentials(keys / "planner.json")                    # its token has epoch 0
+
+    mods = Modules.with_real(["identity", "policy", "defence", "audit"])
+    assert all(mods.status[f] == "real" for f in ("verify_identity", "revoke", "restore", "append"))
+    broker = Broker(mods, client=httpx.Client(transport=httpx.MockTransport(receiver)),
+                    agent_urls={"database": "http://database.test"},
+                    environ={"BROKER_KEYS_DIR": str(keys)})
+    try:
+        broker.start(signing_key_path=key_path, audit_log_path=log_path)
+        client = TestClient(create_app(broker, environ={"BROKER_ADMIN_TOKEN": "admin-placeholder"}, start=False))
+        client.headers["X-Admin-Token"] = "admin-placeholder"
+
+        def send():
+            env = new_request(sender="planner", receiver="database", action="db.query_aggregate",
+                              resource="db:project_costs", payload={"metric": "sum", "column": "amount"},
+                              chain_so_far=["user"])
+            headers = {"Authorization": f"Bearer {planner.token}",
+                       "X-Agent-Proof": make_proof(env, planner.token, planner.private_key)}
+            return broker.handle(json.loads(env.model_dump_json()), headers)
+
+        assert (send().decision, broker.recent_events(1)[0]["reason_code"]) == ("ALLOW", "POLICY_ALLOW")
+        r = client.post("/admin/revoke", json={"agent": "planner", "by": "amna"})
+        assert r.status_code == 200 and (r.json()["status"], r.json()["epoch"]) == ("revoked", 1)
+        assert (send().decision, broker.recent_events(1)[0]["reason_code"]) == ("DENY", "STALE_EPOCH")
+        r = client.post("/admin/restore", json={"agent": "planner", "by": "amna"})
+        assert r.status_code == 200 and (r.json()["status"], r.json()["epoch"]) == ("active", 1)
+        assert (send().decision, broker.recent_events(1)[0]["reason_code"]) == ("DENY", "STALE_EPOCH")
+
+        lines = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+        events = [(r["kind"], r.get("agent"), r.get("by")) for r in lines if r["kind"] != "decision"]
+        assert events == [("revoke", "planner", "amna"), ("restore", "planner", "amna")]
+        assert verify_chain(log_path, key.public_key()).ok
+        api = client.get("/api/events").json()["events"]
+        assert [e["kind"] for e in api if e["kind"] in ("revoke", "restore")] == ["restore", "revoke"]
+    finally:
+        revocation.set_registry(None)                                  # the module keeps one global registry

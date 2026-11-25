@@ -158,6 +158,10 @@ def run_repetition(scenario: Scenario, rep: int, run_dir: Path, *, concurrency: 
             info, per_trace = collect_broker(tb.url("broker"), [o.trace_id for o in outcomes])
             for o in outcomes:
                 o.broker_info, o.broker_events = info, per_trace[o.trace_id]
+            # The broker's view of every agent at the end of the repetition (T, trust state,
+            # quarantined, epoch), and its pending approvals; no payloads.
+            state = httpx.get(f"{tb.url('broker')}/api/state", timeout=30).json()
+            (rep_dir / "broker_state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
 
     for o in outcomes:
         o.envelopes = collect_envelopes(log_dir, o.trace_id)

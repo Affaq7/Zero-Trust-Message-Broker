@@ -18,16 +18,19 @@ from runner.processes import (
     default_broker_real,
     issue_run_credentials,
 )
+from runner.processes import ensure_signing_key
 from runner.results import broker_decision_cell
 
 AGENTS = [{"name": "planner"}, {"name": "database"}]
 
 
-def test_default_broker_real_adds_defence_and_audit_only_when_they_exist(monkeypatch):
-    assert default_broker_real()[:5] == ["identity", "policy", "risk", "trust", "burst"]
-    for name in ("broker.defence.quarantine", "broker.audit.log"):
-        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
-    assert default_broker_real() == ["identity", "policy", "risk", "trust", "burst", "defence", "audit"]
+def test_default_broker_real_is_every_module_on_main(monkeypatch):
+    assert default_broker_real() == ["identity", "policy", "risk", "trust", "burst",
+                                     "validate", "defence", "audit"]
+    import broker.pipeline as pipeline
+    monkeypatch.setattr(pipeline, "_module_exists", lambda path: path not in (
+        "broker.intercept.validate", "broker.defence.quarantine", "broker.audit.log"))
+    assert default_broker_real() == ["identity", "policy", "risk", "trust", "burst"]   # older checkout
 
 
 def test_run_credentials_go_to_a_new_folder_and_never_overwrite(tmp_path):
@@ -100,3 +103,42 @@ def test_collect_broker_keeps_decisions_per_trace_oldest_first(monkeypatch):
                     "modules": {"identity": "real"}, "ignored": {}}
     assert [(e["msg_id"], e["decision"]) for e in per_trace["t1"]] == [("m1", "ALLOW"), ("m2", "DENY")]
     assert "payload" not in per_trace["t1"][1]
+
+
+def test_the_broker_runs_with_one_worker(tmp_path):
+    tb = Testbed(TestbedConfig(agents=AGENTS, run_dir=tmp_path, mode="broker", broker_real=["identity"]))
+    tb._plan()
+    try:
+        assert tb.procs["broker"].extra_args == ("--workers", "1")
+        assert all(p.extra_args == () for name, p in tb.procs.items() if name != "broker")
+    finally:
+        tb.stop()
+
+
+def test_audit_signing_key_is_created_only_when_the_public_key_is_missing(tmp_path, monkeypatch):
+    import runner.processes as processes
+    calls = []
+
+    class Done:
+        returncode, stderr = 0, ""
+
+    monkeypatch.setattr(processes.subprocess, "run", lambda args, **kw: calls.append((args, kw["cwd"])) or Done())
+    pub = tmp_path / "broker_signing.pub"
+    assert ensure_signing_key(sys.executable, pub) is True
+    assert calls == [([sys.executable, "-m", "broker.audit.signing_key", "create"], REPO_ROOT)]
+    pub.write_text("{}", encoding="utf-8")
+    assert ensure_signing_key(sys.executable, pub) is False and len(calls) == 1      # never again
+
+
+def test_audit_run_uses_the_repo_signing_key_and_a_per_run_audit_log(tmp_path, monkeypatch):
+    import runner.processes as processes
+    monkeypatch.setattr(processes, "ensure_signing_key", lambda python: False)
+    tb = Testbed(TestbedConfig(agents=AGENTS, run_dir=tmp_path, mode="broker", broker_real=["identity", "audit"]))
+    tb._plan()
+    try:
+        env = tb.procs["broker"].env
+        assert env["BROKER_SIGNING_KEY"] == str(REPO_ROOT / "keys" / "broker_signing.key")
+        assert env["LOG_DIR"] == str(tmp_path / "logs")                     # audit log under this run
+        assert REPO_ROOT / "keys" not in Path(env["BROKER_KEYS_DIR"]).parents   # agent keys stay outside
+    finally:
+        tb.stop()

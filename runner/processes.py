@@ -29,9 +29,16 @@ CONTROLLED_PREFIXES = ("MODE", "AGENT_", "LLM_", "LOG_DIR", "MOCKS_", "PLANNER_"
                        "BROKER_", "REQUIRE_BROKER_")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ISSUE_CREDENTIALS = REPO_ROOT / "scripts" / "issue_credentials.py"
-# BROKER_REAL for a broker-mode run: the modules on main, plus defence and audit once they exist.
+# BROKER_REAL for a broker-mode run: the modules on main, plus validate, defence and audit when
+# their modules exist (they are all on main now; the check keeps older checkouts working).
 BROKER_REAL_BASE = ("identity", "policy", "risk", "trust", "burst")
-BROKER_REAL_OPTIONAL = {"defence": "broker.defence.quarantine", "audit": "broker.audit.log"}
+BROKER_REAL_OPTIONAL = {"validate": "broker.intercept.validate", "defence": "broker.defence.quarantine",
+                        "audit": "broker.audit.log"}
+# The broker's audit signing key (A4) lives in the repo's keys/ (gitignored). The runner creates
+# it once, only when keys/broker_signing.pub does not exist, with A4's own command, which refuses
+# to overwrite. Nothing else in keys/ is ever written by the runner.
+SIGNING_KEY = REPO_ROOT / "keys" / "broker_signing.key"
+SIGNING_PUB = REPO_ROOT / "keys" / "broker_signing.pub"
 
 
 def default_broker_real() -> list[str]:
@@ -54,14 +61,17 @@ def issue_run_credentials(python: str, out_dir: Path) -> None:
         raise RuntimeError(f"issue_credentials.py failed: {result.stderr.strip()[-300:]}")
 
 
-def create_run_signing_key(python: str, key_path: Path) -> None:
-    """The broker's audit signing key for one run (only when audit is real). Never overwrites."""
-    code = ("import sys; from pathlib import Path; from broker.audit.signing_key import create_key; "
-            "create_key(Path(sys.argv[1]), Path(sys.argv[2]))")
-    result = subprocess.run([python, "-c", code, str(key_path), str(key_path.with_suffix(".pub"))],
-                            cwd=REPO_ROOT, capture_output=True, text=True, timeout=120)
+def ensure_signing_key(python: str, pub_path: Path = SIGNING_PUB) -> bool:
+    """Create the broker signing key pair with `python -m broker.audit.signing_key create`, only
+    if the public key does not exist yet. The command itself refuses to overwrite either file.
+    Returns True when a key pair was created now."""
+    if Path(pub_path).exists():
+        return False
+    result = subprocess.run([python, "-m", "broker.audit.signing_key", "create"], cwd=REPO_ROOT,
+                            capture_output=True, text=True, timeout=120)
     if result.returncode != 0:
         raise RuntimeError(f"creating the broker signing key failed: {result.stderr.strip()[-300:]}")
+    return True
 STARTUP_TIMEOUT_S = 120.0
 STOP_TIMEOUT_S = 10.0
 
@@ -102,6 +112,7 @@ class Proc:
     app: str
     port: int
     env: dict[str, str]
+    extra_args: tuple[str, ...] = ()          # extra uvicorn options (the broker: --workers 1)
     popen: subprocess.Popen | None = None
     log_path: Path | None = None
 
@@ -190,13 +201,15 @@ class Testbed:
         self.broker_real = list(c.broker_real) if c.broker_real is not None else default_broker_real()
         signing_key = ""
         if "audit" in self.broker_real:
-            signing_key = str(self.secrets_dir / "broker_signing.key")
-            create_run_signing_key(c.python, Path(signing_key))
+            ensure_signing_key(c.python)                  # keys/broker_signing.*, created once
+            signing_key = str(SIGNING_KEY)
         self.admin_token = secrets.token_urlsafe(32)
+        # One uvicorn worker: the broker keeps its state (trust, V1, V4, pending approvals) in
+        # memory. LOG_DIR is this repetition's logs/, so the audit log (broker_audit.jsonl) is per run.
         broker = Proc("broker", "broker.app:app", free_port(), {
             **base, "BROKER_REAL": ",".join(self.broker_real), "BROKER_ADMIN_TOKEN": self.admin_token,
             "BROKER_KEYS_DIR": str(keys_dir), "BROKER_SIGNING_KEY": signing_key,
-            "AGENT_URLS": urls, "LOG_DIR": str(logs)})
+            "AGENT_URLS": urls, "LOG_DIR": str(logs)}, extra_args=("--workers", "1"))
         self.procs["broker"] = broker
         return {"BROKER_URL": broker.url, "AGENT_KEYS_DIR": str(keys_dir)}
 
@@ -214,7 +227,7 @@ class Testbed:
                 with open(p.log_path, "w", encoding="utf-8") as out:
                     p.popen = subprocess.Popen(
                         [self.config.python, "-m", "uvicorn", p.app, "--host", "127.0.0.1",
-                         "--port", str(p.port)],
+                         "--port", str(p.port), *p.extra_args],
                         env=p.env, stdout=out, stderr=subprocess.STDOUT, creationflags=flags)
             for p in self.procs.values():
                 self._wait_healthy(p)
