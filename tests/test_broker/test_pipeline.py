@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from broker import stubs
 from broker.app import create_app
 from broker.identity.verify import IdentityResult
-from broker.pipeline import REAL_MODULES, Broker, Modules
+from broker.pipeline import FUNCTIONS, GROUPS, Broker, Modules
 from broker.policy.engine import PolicyResult
 from broker.trust.trust import TrustState
 from contracts import Envelope, new_request
@@ -189,27 +189,31 @@ def test_request_cue_and_burst_events_reach_the_trust_engine():
 
 def test_quarantine_path_and_release():
     broker, receiver = make_broker()
-    client = TestClient(create_app(broker))
+    client = TestClient(create_app(broker, environ={"BROKER_ADMIN_TOKEN": "admin-placeholder"}))
+    client.headers["X-Admin-Token"] = "admin-placeholder"
     broker.modules.defence.revoke("planner")
     r = client.post("/message", json=raw(n1_request()))
     assert r.status_code == 200 and r.json()["decision"] == "QUARANTINE"
     assert r.json()["reason_code"] == "AGENT_QUARANTINED" and receiver.calls == []
-    assert {a["agent"]: a["blocked"] for a in client.get("/api/state").json()["agents"]}["planner"] is True
+    planner = next(a for a in client.get("/api/state").json()["agents"] if a["agent"] == "planner")
+    assert planner["quarantined"] is True and planner["trust_state"] == "Active"   # V1 block, trust untouched
 
     r = client.post("/admin/release", json={"agent": "planner", "reviewer": "afaq"})
     assert r.status_code == 200 and r.json()["released_by"] == "afaq"
     assert broker.modules.trust.releases == [("planner", "afaq")]
     r = client.post("/message", json=raw(n1_request()))
     assert r.json()["decision"] == "ALLOW" and len(receiver.calls) == 1
-    assert client.post("/admin/release", json={"agent": "planner", "reviewer": ""}).status_code == 422
+    assert client.post("/admin/release", json={"agent": "planner", "reviewer": ""}).status_code == 400
 
 
 def test_a_denial_that_trips_the_denial_rate_becomes_quarantine():
-    class V1(stubs.DefenceManager):              # blocks on the second DENY
+    class V1(stubs.DefenceManager):              # quarantines on the second DENY, logging it as PR #8 does
         def record_decision(self, agent, decision, ts):
             super().record_decision(agent, decision, ts)
-            if sum(1 for a, d, _ in self.decisions if a == agent and d == "DENY") >= 2:
+            if sum(1 for a, d, _ in self.decisions if a == agent and d == "DENY") == 2:
                 self.blocked.add(agent)
+                self._log.append({"event": "quarantine", "agent": agent, "reason": "DENIAL_RATE_EXCEEDED",
+                                  "ts": ts, "denials": [ts, ts]})
 
     broker, receiver = make_broker(Modules(defence=V1(), evaluate_policy=_deny_policy))
     first = broker.handle(raw(n1_request()), HEADERS)
@@ -356,12 +360,51 @@ def test_unknown_receiver_url_is_a_forward_failure():
 
 # --- module registry --------------------------------------------------------------------------------
 
-def test_default_modules_are_all_stubs_and_broker_real_switches_and_ignores():
-    assert set(Modules().status.values()) == {"stub"} and set(Modules().status) == set(REAL_MODULES)
-    mods = Modules.from_env({"BROKER_REAL": "risk, trust, burst, validate, nonsense"})
-    assert {n for n, s in mods.status.items() if s == "real"} == {"risk", "trust", "burst"}
-    assert set(mods.ignored) == {"validate", "nonsense"}
-    assert "does not exist" in mods.ignored["validate"]
+# A module group whose module can never exist, so "named in BROKER_REAL but not on this branch"
+# stays testable whichever real modules land later (validate, audit, transport, ...).
+MISSING = "no_such_module_xyz"
+
+
+@pytest.fixture
+def missing_group(monkeypatch):
+    import broker.pipeline as pipeline
+    path, fns = f"broker.{MISSING}", ("validate_envelope",)
+    sample = next(iter(GROUPS.values()))
+    # GROUPS maps a name to (path, functions), or to ((path, functions), ...) where a group
+    # spans several modules; register the fictional group in this branch's shape.
+    value = ((path, fns),) if isinstance(sample[0], tuple) else (path, fns)
+    monkeypatch.setitem(pipeline.GROUPS, MISSING, value)
+    return MISSING
+
+
+def test_default_modules_are_all_stubs_and_broker_real_switches_and_ignores(missing_group):
+    assert set(Modules().status.values()) == {"stub"} and set(Modules().status) == set(FUNCTIONS)
+    mods = Modules.from_env({"BROKER_REAL": f"risk, trust, burst, {missing_group}, nonsense"})
+    assert {n for n, s in mods.status.items() if s == "real"} == {"risk_vector", "required_trust",
+                                                                  "TrustEngine", "BurstDetector"}
+    assert set(mods.ignored) == {missing_group, "nonsense"}
+    assert "does not exist" in mods.ignored[missing_group]
+    assert mods.validate_envelope is stubs.validate_envelope            # the missing module's stub stays
+
+
+def test_validate_loads_the_real_validator_when_it_exists(monkeypatch):
+    """Kissa's broker/intercept/validate.py (PR #11): validate_envelope(raw) -> ValidationResult."""
+    import sys
+    import types
+    real = types.ModuleType("broker.intercept.validate")
+    real.validate_envelope = lambda raw_: stubs.validate_envelope(raw_)
+    monkeypatch.setitem(sys.modules, "broker.intercept.validate", real)
+    mods = Modules.with_real(["validate"])
+    assert mods.status["validate_envelope"] == "real" and mods.validate_envelope is real.validate_envelope
+    assert "validate" not in mods.ignored
+
+
+def test_validate_without_the_module_keeps_the_stub_and_says_so(monkeypatch):
+    import broker.pipeline as pipeline
+    monkeypatch.setattr(pipeline, "_module_exists", lambda path: False)   # as on a branch without PR #11
+    mods = Modules.with_real(["validate"])
+    assert mods.status["validate_envelope"] == "stub"
+    assert "broker.intercept.validate does not exist" in make_broker(mods)[0].health()["ignored"]["validate"]
 
 
 def test_n1_passes_with_the_real_risk_and_trust_modules():
@@ -373,16 +416,18 @@ def test_n1_passes_with_the_real_risk_and_trust_modules():
 
 # --- read-only API shapes ------------------------------------------------------------------------------
 
-def test_health_state_and_events_shapes():
-    broker, _ = make_broker(Modules.with_real(["risk", "validate"]))
+def test_health_state_and_events_shapes(missing_group):
+    broker, _ = make_broker(Modules.with_real(["risk", missing_group]))
     client = TestClient(create_app(broker))
     client.post("/message", json=raw(n1_request()))
     client.post("/message", content=b"{bad")
 
     health = client.get("/health").json()
     assert health["status"] == "ok" and health["service"] == "broker"
-    assert health["real"] == ["risk"] and "identity" in health["stubbed"] and "validate" in health["ignored"]
-    assert set(health["modules"]) == set(REAL_MODULES)
+    assert health["real"] == ["required_trust", "risk_vector"] and "verify_identity" in health["stubbed"]
+    assert missing_group in health["ignored"] and health["modules"]["risk"] == "real"
+    assert set(health["modules"]) == set(GROUPS) and set(health["functions"]) == set(FUNCTIONS)
+    assert health["admin"] == "disabled" and health["startup"]["started"] is True
 
     state = client.get("/api/state").json()
     assert set(state) == {"counters", "agents", "pending_approvals"}
@@ -390,8 +435,9 @@ def test_health_state_and_events_shapes():
     assert c["messages"] == 2 and c["forwarded"] == 1 and c["pending_approvals"] == 0
     assert c["decisions"] == {"ALLOW": 1, "SANITIZE": 0, "HITL": 0, "DENY": 1, "QUARANTINE": 0}
     planner = next(a for a in state["agents"] if a["agent"] == "planner")
-    assert set(planner) == {"agent", "T", "state", "epoch", "blocked"}
-    assert (planner["T"], planner["state"], planner["epoch"], planner["blocked"]) == (1.0, "Active", 0, False)
+    assert set(planner) == {"agent", "T", "trust_state", "quarantined", "epoch"}
+    assert (planner["T"], planner["trust_state"], planner["quarantined"], planner["epoch"]) == (
+        1.0, "Active", False, 0)
 
     events = client.get("/api/events").json()["events"]
     assert [e["reason_code"] for e in events] == ["MALFORMED_JSON", "POLICY_ALLOW"]   # newest first
@@ -399,3 +445,52 @@ def test_health_state_and_events_shapes():
             "events", "notes", "redacted_fields", "forwarded", "entry_hash"}
     assert keys <= set(events[0]) and "payload" not in events[0]
     assert client.get("/api/events?limit=1").json()["events"][0]["reason_code"] == "MALFORMED_JSON"
+
+
+# --- /api/state: quarantined vs trust state ------------------------------------------------------------
+
+def test_state_reports_a_trust_quarantine_as_quarantined():
+    class Quarantined(stubs.TrustEngine):
+        def get(self, agent):
+            return TrustState(agent=agent, T=0.2, state="Quarantined" if agent == "research" else "Active")
+
+    broker, _ = make_broker(Modules(trust=Quarantined()))           # the stub defence follows the trust engine
+    agents = {a["agent"]: a for a in broker.state()["agents"]}
+    assert (agents["research"]["quarantined"], agents["research"]["trust_state"]) == (True, "Quarantined")
+    assert (agents["planner"]["quarantined"], agents["planner"]["trust_state"]) == (False, "Active")
+
+
+# --- DefenceManager.log() returns the whole list each time: each entry is audited once ---------------------
+
+def test_defence_log_entries_are_audited_exactly_once():
+    class V1(stubs.DefenceManager):              # quarantines on the first DENY and logs it, like PR #8
+        def record_decision(self, agent, decision, ts):
+            super().record_decision(agent, decision, ts)
+            if decision == "DENY" and agent not in self.blocked:
+                self.blocked.add(agent)
+                self._log.append({"event": "quarantine", "agent": agent, "reason": "DENIAL_RATE_EXCEEDED",
+                                  "ts": ts, "denials": [ts]})
+
+    audit = stubs.AuditLog()
+    broker, _ = make_broker(Modules(defence=V1(), evaluate_policy=_deny_policy, append=audit.append))
+    assert broker.handle(raw(n1_request()), HEADERS).reason_code == "DENIAL_RATE_EXCEEDED"
+    assert broker.handle(raw(n1_request()), HEADERS).reason_code == "AGENT_QUARANTINED"
+    assert broker.handle(raw(n1_request()), HEADERS).reason_code == "AGENT_QUARANTINED"
+    kinds = [e.get("kind") for e in audit.entries]
+    assert kinds.count("quarantine") == 1 and kinds.count("decision") == 3
+    assert len(broker.modules.defence.log()) == 1                       # the list itself still holds it
+
+
+# --- /message body size --------------------------------------------------------------------------------
+
+def test_a_body_over_256_kb_is_denied_without_being_read():
+    from broker.app import MAX_BODY_BYTES
+    broker, receiver = make_broker()
+    client = TestClient(create_app(broker))
+    big = raw(n1_request(payload={"metric": "sum", "column": "amount", "note": "x" * MAX_BODY_BYTES}))
+    r = client.post("/message", json=big)
+    assert r.status_code == 200
+    env = Envelope.model_validate(r.json())
+    assert (env.decision, env.reason_code, env.payload) == ("DENY", "PAYLOAD_TOO_LARGE", {"status": "denied"})
+    assert receiver.calls == [] and last_event(broker)["step"] == 1
+    assert client.post("/message", json=raw(n1_request())).json()["decision"] == "ALLOW"   # normal size still fine

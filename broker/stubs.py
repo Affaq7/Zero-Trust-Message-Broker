@@ -71,21 +71,51 @@ def verify_identity(headers: dict, env: Envelope) -> IdentityResult:
 
 # --- step 3: quarantine (real: broker/defence/quarantine.py, Amna A3) ---------------------
 
-class DefenceManager:
-    """Stub: never quarantines on its own; revoke(agent) blocks that agent."""
+STUB_REVIEWERS = ("amna", "kissa", "afaq")   # as in PR #8's defence_settings.yaml
 
-    def __init__(self) -> None:
+
+class DefenceManager:
+    """Stub with PR #8's interface: DefenceManager(trust=None, settings=None).
+
+    Never quarantines on its own (no V1 window); revoke(agent) blocks an agent for tests.
+    is_blocked also follows the trust engine's Quarantined state, and release() needs an
+    allowed reviewer, clears the block and calls TrustEngine.release, as the real one does.
+    """
+
+    def __init__(self, trust: Any = None, settings: dict | None = None) -> None:
+        self.trust = trust
+        self.reviewers = tuple((settings or {}).get("reviewers", STUB_REVIEWERS))
         self.decisions: list[tuple[str, str, float]] = []
         self.blocked: set[str] = set()
+        self._log: list[dict] = []
 
     def record_decision(self, agent: str, decision: str, ts: float) -> None:
-        self.decisions.append((agent, decision, ts))
+        if agent:
+            self.decisions.append((agent, decision, ts))
 
     def is_blocked(self, agent: str) -> bool:
-        return agent in self.blocked
+        if not agent:
+            return False
+        return agent in self.blocked or (self.trust is not None and self.trust.get(agent).state == "Quarantined")
+
+    def release(self, agent: str, reviewer: str, ts: float | None = None) -> None:
+        if reviewer not in self.reviewers:
+            raise PermissionError(f"reviewer {reviewer!r} may not release agents")
+        if not agent:
+            raise ValueError("agent name is empty")
+        if not self.is_blocked(agent):
+            raise ValueError(f"{agent!r} is not quarantined")
+        self.blocked.discard(agent)
+        if self.trust is not None:
+            self.trust.release(agent, reviewer)
+        self._log.append({"event": "release", "agent": agent, "reviewer": reviewer, "ts": ts})
 
     def revoke(self, agent: str) -> None:
+        """Test helper: block the agent as a quarantine would."""
         self.blocked.add(agent)
+
+    def log(self) -> list[dict]:
+        return [dict(e) for e in self._log]
 
 
 # --- step 4: policy (real: broker/policy/engine.py) ---------------------------------------
