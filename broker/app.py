@@ -33,6 +33,9 @@ from starlette.concurrency import run_in_threadpool
 from broker.pipeline import Broker, UnknownAgentError
 
 ADMIN_HEADER = "X-Admin-Token"
+# The largest /message body the broker reads. Larger bodies get a DENY envelope with
+# PAYLOAD_TOO_LARGE without being read further (step 1 also caps the payload at 64 KB).
+MAX_BODY_BYTES = 256 * 1024
 ADMIN_ENV_VAR = "BROKER_ADMIN_TOKEN"
 
 
@@ -46,6 +49,19 @@ class AgentRequest(BaseModel):
 
     agent: str = Field(min_length=1, max_length=128)
     by: str = Field(default="admin", min_length=1, max_length=128)
+
+
+async def _read_limited(request: Request, limit: int) -> bytes | None:
+    """The request body, or None as soon as it is known to be over ``limit`` bytes."""
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > limit:
+        return None
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > limit:
+            return None
+    return bytes(body)
 
 
 def _error(status: int, message: str) -> JSONResponse:
@@ -78,7 +94,10 @@ def create_app(broker: Broker | None = None, environ: Mapping[str, str] = os.env
     async def message(request: Request) -> JSONResponse:
         # The raw body is read by hand so that FastAPI never rejects it with a 422:
         # anything that is not a JSON object still gets a DENY envelope (MALFORMED_JSON).
-        body = await request.body()
+        body = await _read_limited(request, MAX_BODY_BYTES)
+        if body is None:
+            env = await run_in_threadpool(broker.refuse_unread, "PAYLOAD_TOO_LARGE")
+            return JSONResponse(env.model_dump(mode="json"), status_code=200)
         try:
             raw = json.loads(body)
         except (ValueError, UnicodeDecodeError):

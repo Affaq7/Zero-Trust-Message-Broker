@@ -607,6 +607,17 @@ class Broker:
             entry_hash = self.modules.append(entry) if kind in AUDIT_EVENT_KINDS else None
             self.events.append({**entry, "entry_hash": entry_hash})
 
+    def refuse_unread(self, reason: str) -> Envelope:
+        """A DENY for a request the app would not read (e.g. a body over the size limit).
+        Audited and recorded like any step-1 refusal; never raises."""
+        tr = _Trace(step=1, decision="DENY", reason_code=reason)
+        reply = self._refusal(None, None, "DENY", reason)
+        try:
+            return self._finish(reply, tr)
+        except Exception as exc:  # noqa: BLE001
+            log.error("audit/sign failed: %s", type(exc).__name__)
+            return reply
+
     def admin_event(self, kind: str, **fields: Any) -> None:
         """An admin call that changed nothing (refused): event list only, never secrets."""
         with self._lock:
@@ -633,9 +644,11 @@ class Broker:
             agents = []
             for name in self.known_agents():
                 ts = self.modules.trust.get(name)
-                agents.append({"agent": name, "T": round(float(ts.T), 4), "state": ts.state,
-                               "epoch": self._epochs.get(name),
-                               "blocked": bool(self.modules.defence.is_blocked(name))})
+                # quarantined: the step-3 answer (V1 block or trust-engine Quarantined, as
+                # DefenceManager.is_blocked says); trust_state: the trust engine's own state.
+                agents.append({"agent": name, "T": round(float(ts.T), 4), "trust_state": ts.state,
+                               "quarantined": bool(self.modules.defence.is_blocked(name)),
+                               "epoch": self._epochs.get(name)})
             counters = {
                 "messages": self.counters["messages"],
                 "forwarded": self.counters["forwarded"],
