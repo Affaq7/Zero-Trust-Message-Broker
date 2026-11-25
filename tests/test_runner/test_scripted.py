@@ -291,7 +291,8 @@ def test_all_scenario_files_parse():
     assert len(scripted) >= 5, f"expected at least 5 scripted scenarios, got {len(scripted)}"
     for s in scripted:
         assert s.category == "attack"
-        assert s.baseline == "applicable"
+        # applicable in direct mode, or (A9, A10, A12, A14) only through the broker
+        assert s.baseline == "applicable" or s.broker_status() == "applicable"
         assert s.entry is None
 
 

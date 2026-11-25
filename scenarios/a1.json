@@ -34,5 +34,17 @@
     }
   },
   "expected_decision": "DENY: research may not call db.query_rows",
-  "entitled_parties": null
+  "entitled_parties": null,
+  "expected_broker": {
+    "expected_decision": "DENY (ROLE_NOT_ALLOWED)",
+    "decisions": [
+      {
+        "decision": "DENY",
+        "reason_code": "ROLE_NOT_ALLOWED"
+      }
+    ],
+    "http_status": [
+      200
+    ]
+  }
 }

@@ -150,6 +150,7 @@ class Testbed:
         # at stop), its admin token (kept in memory, never written) and the BROKER_REAL list.
         self.secrets_dir: Path | None = None
         self.admin_token: str | None = None
+        self.forward_token: str | None = None
         self.broker_real: list[str] = []
 
     # --- setup -----------------------------------------------------------------
@@ -204,14 +205,19 @@ class Testbed:
             ensure_signing_key(c.python)                  # keys/broker_signing.*, created once
             signing_key = str(SIGNING_KEY)
         self.admin_token = secrets.token_urlsafe(32)
+        # The per-run forwarding secret: the broker sends it to agents in X-Broker-Token, and agents
+        # in broker mode refuse any request without it (A12). Memory and process env only.
+        self.forward_token = secrets.token_urlsafe(32)
         # One uvicorn worker: the broker keeps its state (trust, V1, V4, pending approvals) in
         # memory. LOG_DIR is this repetition's logs/, so the audit log (broker_audit.jsonl) is per run.
         broker = Proc("broker", "broker.app:app", free_port(), {
             **base, "BROKER_REAL": ",".join(self.broker_real), "BROKER_ADMIN_TOKEN": self.admin_token,
             "BROKER_KEYS_DIR": str(keys_dir), "BROKER_SIGNING_KEY": signing_key,
+            "BROKER_FORWARD_TOKEN": self.forward_token,
             "AGENT_URLS": urls, "LOG_DIR": str(logs)}, extra_args=("--workers", "1"))
         self.procs["broker"] = broker
-        return {"BROKER_URL": broker.url, "AGENT_KEYS_DIR": str(keys_dir)}
+        return {"BROKER_URL": broker.url, "AGENT_KEYS_DIR": str(keys_dir),
+                "BROKER_FORWARD_TOKEN": self.forward_token}
 
     def start(self) -> "Testbed":
         if not self._registered:

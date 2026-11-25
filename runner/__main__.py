@@ -108,24 +108,6 @@ def main(argv=None) -> int:
         llm_backend = args.llm or "fake"
         mode = args.mode or "direct"
         versions = None
-    if mode == "broker":
-        # Scenarios that drive a local attacker (the scripted sender, or a compromised responder
-        # run under a victim's name) still send straight to the agents. Routing them through the
-        # broker is the next phase (F2-B); until then they are refused here, never run directly.
-        def _local_attacker(s):
-            return s.scripted is not None or any(a.impl == "malicious" for a in s.agents)
-        refused = sorted(i for i, s in scenarios.items() if _local_attacker(s))
-        if refused and args.scenario:
-            return _fail(f"--mode broker does not run scripted or compromised-responder scenarios yet "
-                         f"(refused: {', '.join(refused)}). Their attacker still sends straight to the agents; "
-                         f"routing it through the broker comes in the next phase (F2-B). Nothing was run or "
-                         f"scored; run them with --mode direct for the baseline.")
-        if refused:
-            print(f"note: --mode broker skips scripted and compromised-responder scenarios for now "
-                  f"({', '.join(refused)}; not run, not scored): their attacker still sends straight to "
-                  f"the agents, and routing it through the broker comes in the next phase (F2-B)",
-                  file=sys.stderr)
-            scenarios = {i: s for i, s in scenarios.items() if i not in refused}
     if not scenarios:
         return _fail(f"no scenario files in {args.scenarios_dir}")
     if args.dry_run:
@@ -176,15 +158,19 @@ def main(argv=None) -> int:
     stopped = False
     try:
         for s in scenarios.values():
-            if s.baseline == "not_applicable":
+            # Under --mode broker a scenario's expected_broker block decides whether it runs
+            # (A9, A10, A12 and A14 run only through the broker; A2 and A4 wait for F3).
+            status = s.broker_status() if mode == "broker" else s.baseline
+            broker_reason = s.expected_broker.reason if (mode == "broker" and s.expected_broker) else None
+            if status == "not_applicable":
                 if s.id not in done_na:
-                    writer.add_not_applicable(s)
-                    print(f"{s.id}: not applicable ({s.not_applicable_reason})")
+                    writer.add_not_applicable(s, broker_reason)
+                    print(f"{s.id}: not applicable ({broker_reason or s.not_applicable_reason})")
                 continue
-            if s.baseline == "not_executed":
+            if status in ("not_executed", "pending_f3"):
                 if s.id not in done_na:
-                    writer.add_not_executed(s)
-                    print(f"{s.id}: defined, not executed ({s.not_executed_reason})")
+                    writer.add_not_executed(s, broker_reason)
+                    print(f"{s.id}: defined, not executed ({broker_reason or s.not_executed_reason})")
                 continue
             for rep in range(1, (reps_override or s.reps) + 1):
                 conc_levels = [1] if s.scripted is not None else s.concurrency

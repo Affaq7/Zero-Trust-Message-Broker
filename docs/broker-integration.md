@@ -222,7 +222,10 @@ credential file (`AGENT_CREDENTIALS`, `AGENT_KEYS_DIR`). Without issued
 credentials, or without `BROKER_URL`, nothing is sent and the agent gets a
 clear error. The broker forwards an allowed request to the receiver's wrapper
 (`AGENT_URLS`, read by the broker), which handles it exactly as in direct
-mode; receivers no longer answer 501. The token and proof stay with the
+mode; receivers no longer answer 501. When forwarding, the broker adds the
+run's forwarding secret in `X-Broker-Token`, and an agent in broker mode
+refuses any request without it (401, or 403 for a wrong value), so agents
+cannot be reached around the broker (A12). The token and proof stay with the
 broker. Direct mode is unchanged.
 
 **The denial format.** A refusal is a normal response envelope with HTTP 200:
@@ -254,9 +257,21 @@ The decision and reason code of every message go to `results.csv`
 (`broker_decision`) and `broker_decisions.jsonl`; the broker's end state per
 repetition to `broker_state.json`; which modules were real or stubbed to
 `run_meta.json` (`broker`). The audit log is per run:
-`<repetition>/logs/broker_audit.jsonl`. Scripted and compromised-responder
-scenarios are not run in broker mode yet (the next phase routes their
-attacker through the broker).
+`<repetition>/logs/broker_audit.jsonl`.
+
+**Attack scenarios in broker mode (F2-B).** The scripted attacker sends through
+the broker with the sender's issued credentials and a proof (token modes
+`valid`, `expired`, `stolen`, `reissued`, `missing`; `bypass_broker` sends
+straight to an agent's port for A12). Operator steps in a scenario (release,
+revoke, restore) are made by the runner with the run's admin token, which the
+attacker never sees. Each scenario's `expected_broker` block (text from
+`docs/scenario-control-map.md` section 3) says which decisions and reason codes
+the broker must give, in order, which audit events must appear, and the expected
+HTTP statuses and end state. The verdict (`detected` in `results.csv`, details
+in `broker_score.jsonl`) comes from the broker's decisions and the verified
+audit log, not from the agent's answer. A2 and A4 wait for the content checks
+(F3) and are recorded as not executed; A11 needs encrypted transport (A5) and is
+not applicable; A3 needs the live model.
 
 **Environment variables.**
 
@@ -268,6 +283,7 @@ attacker through the broker).
 | `BROKER_ADMIN_TOKEN` | broker | required in `X-Admin-Token` for `/admin/*`; if it is not set, every admin call is refused |
 | `BROKER_KEYS_DIR` | broker | where the broker reads the agents' public keys (default `keys/`) |
 | `BROKER_SIGNING_KEY` | broker | the audit signing key file (default `keys/broker_signing.key`) |
+| `BROKER_FORWARD_TOKEN` | broker, agents | the run's forwarding secret, made by the runner in memory: the broker sends it in `X-Broker-Token`, agents in broker mode refuse requests without it |
 | `REQUIRE_BROKER_SIGNATURE` | agents | `1` makes an agent refuse requests without a valid broker signature (`X-Broker-Signature`); off by default, because the signature (A5) is not built yet, so turning it on refuses everything |
 
 **Still open:** G3 for the outbound calls other than mail, A8's target (Q-S2: the database

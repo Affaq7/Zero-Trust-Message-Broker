@@ -97,7 +97,9 @@ def test_misdirected_request_logged_without_response(client, log_dir):
 def test_broker_mode_logs_request_and_reply_like_direct_mode(log_dir):
     # The 501 is gone: in broker mode the wrapper serves the requests the broker forwards
     # and logs them exactly as in direct mode (full envelopes, never the token or proof).
-    c = TestClient(create_app(Settings(mode="broker", agent_name="dummy", log_dir=log_dir)))
+    c = TestClient(create_app(Settings(mode="broker", agent_name="dummy", log_dir=log_dir,
+                                       broker_forward_token="forward-placeholder-secret")))
+    c.headers["X-Broker-Token"] = "forward-placeholder-secret"                           # forwarded by the broker
     r = post(c, request_dict())
     assert r.status_code == 200 and r.json()["msg_type"] == "response"
     records = read_log(log_dir)

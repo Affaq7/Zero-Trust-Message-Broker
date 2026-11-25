@@ -79,6 +79,8 @@ def test_secret_assignments_are_found(line):
     f'{PW_NAME} = ""',                          # empty
     'token="stub-token-for-tests"',                 # placeholder word
     'step(token="expired")',                         # scripted attacker token mode
+    '"token": "stolen"',                             # broker-mode token modes (F2-B)
+    '{"token": "reissued", "token_epoch": 1}',
     'api_key: "${API_KEY}"',                         # template
     f'{PW_NAME}: "<your value here>"',
     "max_tokens = 256",
@@ -145,3 +147,8 @@ def test_check_reports_rule_and_location_but_never_the_text(capsys):
         "private-key-header: app.py:12",
     ]
     assert not any(FAKE_VALUE in f or "BEGIN" in f for f in findings)
+
+
+def test_token_mode_words_are_exempt_only_as_the_whole_value():
+    assert cf.scan_line('"token": "stolen"', None) == []
+    assert cf.scan_line(f'"token": "stolen-{FAKE_VALUE}"', None) == ["secret-assignment"]

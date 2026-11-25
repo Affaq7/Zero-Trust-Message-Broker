@@ -5,5 +5,35 @@
   "baseline": "not_applicable",
   "not_applicable_reason": "Decision S6: direct mode checks no token and no per-message proof (proof format not defined yet); running it would only repeat A6.",
   "expected_decision": "DENY (identity reason code)",
-  "entitled_parties": null
+  "entitled_parties": null,
+  "agents": [
+    {
+      "name": "tool"
+    }
+  ],
+  "scripted": {
+    "sender": "research",
+    "sender_role": "research",
+    "steps": [
+      {
+        "receiver": "tool",
+        "action": "file.read_internal",
+        "resource": "file:/internal/q3_report.txt",
+        "payload": {},
+        "token": "stolen"
+      }
+    ]
+  },
+  "expected_broker": {
+    "expected_decision": "DENY (PROOF_KEY_MISMATCH)",
+    "decisions": [
+      {
+        "decision": "DENY",
+        "reason_code": "PROOF_KEY_MISMATCH"
+      }
+    ],
+    "http_status": [
+      200
+    ]
+  }
 }

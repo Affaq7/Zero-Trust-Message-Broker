@@ -4,6 +4,7 @@ No network: the broker is an httpx.MockTransport. Credentials are issued into a 
 folder by scripts/issue_credentials.py; the real keys/ folder is never used."""
 
 import importlib.util
+import json
 import sys
 import types
 from pathlib import Path
@@ -156,8 +157,15 @@ def request_body():
                        chain_so_far=["user"]).model_dump_json()
 
 
+FORWARD = "forward-placeholder-secret"     # the per-run broker forwarding secret (X-Broker-Token), a test value
+
+
 def app_client(tmp_path, **settings):
-    return TestClient(create_app(Settings(mode="broker", agent_name="dummy", log_dir=tmp_path, **settings)))
+    """A broker-mode agent, called as the broker calls it (with the forwarding token)."""
+    c = TestClient(create_app(Settings(mode="broker", agent_name="dummy", log_dir=tmp_path,
+                                       broker_forward_token=FORWARD, **settings)))
+    c.headers["X-Broker-Token"] = FORWARD
+    return c
 
 
 def test_signature_check_off_by_default(tmp_path):
@@ -187,3 +195,53 @@ def test_signature_flag_has_no_effect_in_direct_mode(tmp_path):
     client = TestClient(create_app(Settings(mode="direct", agent_name="dummy", log_dir=tmp_path,
                                             require_broker_signature=True)))
     assert client.post("/message", content=request_body()).status_code == 200
+
+
+# --- the broker forwarding token (X-Broker-Token, A12) ---------------------------------------------
+
+def test_a_request_that_did_not_come_through_the_broker_is_refused(tmp_path):
+    agent = TestClient(create_app(Settings(mode="broker", agent_name="dummy", log_dir=tmp_path,
+                                           broker_forward_token=FORWARD)))
+    r = agent.post("/message", content=request_body())                      # straight to the agent port
+    assert r.status_code == 401 and FORWARD not in r.text
+    r = agent.post("/message", content=request_body(), headers={"X-Broker-Token": "wrong-placeholder"})
+    assert r.status_code == 403 and FORWARD not in r.text
+    assert not list(tmp_path.glob("*.jsonl"))                                  # nothing reached the agent
+    assert agent.get("/health").status_code == 200                            # health stays open
+
+
+def test_broker_mode_without_a_forwarding_token_refuses_everything(tmp_path):
+    agent = TestClient(create_app(Settings(mode="broker", agent_name="dummy", log_dir=tmp_path)))
+    r = agent.post("/message", content=request_body(), headers={"X-Broker-Token": "anything-placeholder"})
+    assert r.status_code == 403 and "BROKER_FORWARD_TOKEN" in r.json()["error"]
+
+
+def test_direct_mode_ignores_the_forwarding_token(tmp_path):
+    agent = TestClient(create_app(Settings(mode="direct", agent_name="dummy", log_dir=tmp_path,
+                                           broker_forward_token=FORWARD)))
+    assert agent.post("/message", content=request_body()).status_code == 200
+
+
+def test_forwarding_token_is_read_from_the_environment_and_not_shown():
+    s = load_settings({"MODE": "broker", "AGENT_NAME": "x", "BROKER_FORWARD_TOKEN": FORWARD})
+    assert s.broker_forward_token == FORWARD and FORWARD not in repr(s)
+
+
+def test_the_same_request_forwarded_by_the_broker_succeeds(tmp_path):
+    """A real Broker (stub modules) forwards to a real broker-mode wrapper and is accepted;
+    the identical request sent straight to the wrapper is refused."""
+    from broker.pipeline import Broker, Modules
+
+    agent = TestClient(create_app(Settings(mode="broker", agent_name="dummy", log_dir=tmp_path,
+                                           broker_forward_token=FORWARD)))
+
+    def to_agent(request):
+        r = agent.post("/message", content=request.content, headers=dict(request.headers))
+        return httpx.Response(r.status_code, content=r.content)
+
+    broker = Broker(Modules(), client=httpx.Client(transport=httpx.MockTransport(to_agent)),
+                    agent_urls={"dummy": "http://dummy.test"}, environ={"BROKER_FORWARD_TOKEN": FORWARD})
+    body = request_body()
+    out = broker.handle(json.loads(body), {})
+    assert (out.decision, out.payload["status"]) == ("ALLOW", "ok")
+    assert agent.post("/message", content=body).status_code == 401           # around the broker: refused

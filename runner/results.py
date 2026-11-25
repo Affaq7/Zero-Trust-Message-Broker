@@ -277,7 +277,13 @@ class ResultsWriter:
             "expected_decision": scenario.expected_decision, "error": o.error,
             # MODE=broker only (empty in direct mode, as before): every message's decision:reason.
             **({"broker_decision": broker_decision_cell(o.broker_events)} if o.broker_events else {}),
+            # MODE=broker with expected_broker: did the broker do what the scenario expects
+            # (decisions, audit log, HTTP statuses, quarantine state)? Empty when not scored.
+            **({"detected": o.broker_score["matched"]}
+               if o.broker_score is not None and o.broker_score.get("matched") is not None else {}),
         })
+        if o.broker_score is not None:
+            self._append_jsonl("broker_score.jsonl", [{**ids, **o.broker_score}])
         if o.broker_events:
             self._append_jsonl("broker_decisions.jsonl", [{**ids, "n": n, **e}
                                                           for n, e in enumerate(o.broker_events, 1)])
@@ -304,18 +310,18 @@ class ResultsWriter:
                                             if str(c.get("purpose", "")).startswith("research.")),
                 "research_lookup_ms_max": max(lookups)}
 
-    def add_not_applicable(self, scenario: Scenario) -> None:
+    def add_not_applicable(self, scenario: Scenario, reason: str | None = None) -> None:
         self._append_csv({"run_id": self.run_id, "scenario_id": scenario.id,
                           "category": scenario.category, "baseline": scenario.baseline,
                           "status": "not_applicable",
-                          "not_applicable_reason": scenario.not_applicable_reason,
+                          "not_applicable_reason": reason or scenario.not_applicable_reason,
                           "expected_decision": scenario.expected_decision})
 
-    def add_not_executed(self, scenario: Scenario) -> None:
+    def add_not_executed(self, scenario: Scenario, reason: str | None = None) -> None:
         self._append_csv({"run_id": self.run_id, "scenario_id": scenario.id,
                           "category": scenario.category, "baseline": scenario.baseline,
                           "status": "not_executed",
-                          "not_executed_reason": scenario.not_executed_reason,
+                          "not_executed_reason": reason or scenario.not_executed_reason,
                           "expected_decision": scenario.expected_decision})
 
     # --- summary -------------------------------------------------------------------

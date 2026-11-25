@@ -38,8 +38,14 @@ def test_not_applicable_attacks(scenarios, sid):
     s = scenarios[sid]
     assert (s.category, s.baseline) == ("attack", "not_applicable")
     assert s.not_applicable_reason and len(s.not_applicable_reason) > 20
-    assert s.agents == [] and s.entry is None and s.success_criteria == []
+    assert s.entry is None and s.success_criteria == []
     assert s.expected_decision                                  # runner-only, from the team sheet
+    # Direct mode starts nothing for these. A9, A10, A12 and A14 define agents and scripted steps
+    # that run only under --mode broker (F2-B); the others define none.
+    if s.broker_status() == "applicable":
+        assert s.agents and s.scripted is not None and s.expected_broker.decisions
+    else:
+        assert s.agents == [] and s.scripted is None
 
 
 _A3_FILE_READ = {"kind": "file.read", "trace_id": "t", "recorded_at": "x",

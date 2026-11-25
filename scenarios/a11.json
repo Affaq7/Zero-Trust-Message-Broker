@@ -5,5 +5,10 @@
   "baseline": "not_applicable",
   "not_applicable_reason": "Needs the broker: there is no agent-broker link in direct mode, and direct traffic is plain HTTP by design.",
   "expected_decision": "Payload unreadable; plain HTTP refused",
-  "entitled_parties": null
+  "entitled_parties": null,
+  "expected_broker": {
+    "status": "not_applicable",
+    "reason": "needs encrypted agent-broker transport (A5, broker/transport), not built; the testbed uses plain HTTP on loopback",
+    "expected_decision": "the traffic between an agent and the broker cannot be read"
+  }
 }
