@@ -98,7 +98,7 @@ def test_ts_defaults_to_now(path, key):
 
 @pytest.mark.parametrize("bad", [
     {"payload": {"x": 1}},                 # the payload itself, never stored
-    {"token": "eyJ..."},                   # a token
+    {"token": "fake-token"},               # a token
     {"scenario": "A9"},                    # a scenario label
     {"decision": "MAYBE"},
     {"kind": "nope"},
