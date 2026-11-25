@@ -108,6 +108,20 @@ def test_kissa_owns_her_credentials_and_proof_tests():
     assert run("kissa/x", files).errors == []
 
 
+TRUST_FIGURES = ["figures/trust_attacker.svg", "figures/trust_noisy.svg"]
+
+
+def test_amna_owns_the_trust_figures():
+    assert run("amna/x", TRUST_FIGURES).errors == []
+
+
+def test_kissa_needs_the_label_for_the_trust_figures():
+    res = run("kissa/x", TRUST_FIGURES)
+    assert res.errors == [f"cross-owner-change: {f} is outside kissa/* ownership; needs label {CROSS}"
+                          for f in TRUST_FIGURES]
+    assert run("kissa/x", TRUST_FIGURES, [CROSS]).errors == []
+
+
 def test_folder_patterns_do_not_match_lookalike_folders():
     assert run("kissa/x", ["broker/identityx/a.py"]).errors
     assert cp.matches("broker/identity/a.py", "broker/identity/")
