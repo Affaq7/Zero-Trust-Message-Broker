@@ -8,6 +8,7 @@ import base64
 import binascii
 import hashlib
 import json
+import re
 from collections.abc import Mapping
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
@@ -19,6 +20,7 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 ED25519_KEY_BYTES = 32
+_B64URL = re.compile(r"[A-Za-z0-9_-]*")
 
 
 def b64url(data: bytes) -> str:
@@ -27,10 +29,12 @@ def b64url(data: bytes) -> str:
 
 
 def b64url_decode(text: str) -> bytes:
-    """Inverse of b64url(); raises ValueError on bad input."""
+    """Inverse of b64url(); strict: padding, '+', '/' or any other character raises ValueError."""
+    if not isinstance(text, str) or not _B64URL.fullmatch(text):
+        raise ValueError("not base64url")
     try:
         return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-    except (binascii.Error, ValueError, TypeError) as exc:
+    except (binascii.Error, ValueError) as exc:     # e.g. a length of 4n + 1
         raise ValueError("not base64url") from exc
 
 
