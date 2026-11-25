@@ -292,7 +292,7 @@ only narrow the catalog, never widen it.
 |---|---|---|
 | `AGENT_QUARANTINED` | 3, quarantine check | Amna |
 | `RECIPIENT_NOT_APPROVED` | 5, request content check (A4: a recipient in `to`, `cc` or `bcc` that the original request did not ask for) | Afaq (F3) |
-| `REPLY_SANITIZED` | 9, reply content check: the `reason_code` of a SANITIZE decision (A2); Amna also uses it as a trust event | Afaq (F3) |
+| `REPLY_SANITIZED` | 9, reply content check: the `reason_code` of a SANITIZE decision (A2); also a trust event (decision and event rows below) | Afaq (F3) |
 | `HITL_PENDING`, `HITL_REJECTED`, `HITL_TIMEOUT` | 7, approval queue (F3) | Afaq |
 
 ### Steps 3 and 6, quarantine and trust (Amna, A2 and A3; rules V1 to V5 in `docs/detection-design.md`)
@@ -305,12 +305,15 @@ only narrow the catalog, never widen it.
 | `INJECTION_CUE` | event | V3 | lowers T (severity 0.5), audit log; from K4 (request) or F3 (reply) | `broker/trust/trust.py` (A2) |
 | `BURST_DETECTED` | event | V4 | state Suspicious for 20 messages, audit log; more than 10 requests per agent per trace | `broker/trust/rules.py` (A2) |
 | `INDIVIDUAL_DATA_REQUEST` | event | V5 | lowers T (severity 1.0), audit log; flag from F3 `minimum_necessary` | `broker/trust/trust.py` (A2) |
+| `REPLY_SANITIZED` | decision | step 9 | SANITIZE: the reply is cut to what the request asked for, and this is the `reason_code` of that reply (A2) | `broker.content` (F3) |
 | `REPLY_SANITIZED` | event | A2 scenario | lowers the responder's T (severity 0.5), audit log; from F3 | `broker/trust/trust.py` (A2) |
 
 A decision code is the `reason_code` of the broker's reply. An event code never
 decides on its own: it is passed to `TrustEngine.update(events=...)` and written
-to the audit log. V2 adds no code: it uses `ROLE_NOT_ALLOWED` and
-`DELEGATION_EXCEEDS_DELEGATOR` (step 4), counted once.
+to the audit log. `REPLY_SANITIZED` is the one code that is both: F3 sets it as
+the SANITIZE decision's `reason_code`, and the same sanitising is passed to the
+trust engine as an event (agreed by Amna, 26 Nov). V2 adds no code: it uses
+`ROLE_NOT_ALLOWED` and `DELEGATION_EXCEEDS_DELEGATOR` (step 4), counted once.
 
 ### Expected identity codes for the scenarios (input to K-R2)
 
