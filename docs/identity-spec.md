@@ -275,6 +275,13 @@ through `verify.py`.
 | `NEEDS_APPROVAL` | ALLOW, `needs_human=True` | Conditional action that needs a human (`tool.send_email_external`) |
 | `POLICY_ALLOW` | ALLOW | all policy checks passed |
 
+Defence in depth: if policy is ever called with a failed identity it denies
+with that identity code; with an identity for another agent, `SUB_MISMATCH`;
+with an envelope that breaks `rule_violations()`, `RULE_VIOLATION` (same
+meaning as in step 1). The Conditional rules and the delegation limit
+(`max_delegation_agents: 3`) live in `broker/policy/rules.yaml`, which can
+only narrow the catalog, never widen it.
+
 ### Other steps (proposed, owners to confirm)
 
 | Code | Step | Owner |

@@ -1,0 +1,23 @@
+# Policy rules for the broker (K3, docs/identity-spec.md section 6).
+#
+# These rules NARROW the action catalog (contracts/action_catalog.yaml); they can
+# never widen it. Who may call an action at all is the catalog's allowed_roles.
+# Change this file to change a decision; no code change is needed. The broker
+# refuses to start if this file names an unknown action or role, or misses a
+# Conditional action.
+#
+# Free text in a message (for example `justification`) is never read here.
+
+schema_version: "0.2"
+
+# Agents allowed in delegation_chain after "user" (the chain ends with the sender).
+max_delegation_agents: 3
+
+# Every Conditional action needs a rule.
+#   only_roles:  roles that may call it (intersected with the catalog's allowed_roles)
+#   needs_human: true = ALLOW only after a human approves (HITL queue, Afaq's F3)
+conditional:
+  db.query_rows:            {only_roles: [planner]}
+  db.update_records:        {only_roles: [planner]}
+  file.delete:              {only_roles: [planner]}
+  tool.send_email_external: {only_roles: [planner], needs_human: true}
