@@ -74,8 +74,8 @@ class DefenceManager:
             window.popleft()
         if len(window) >= self.s["deny_limit"]:
             self._blocked.add(agent)
-            self._log.append({"event": "quarantine", "agent": agent, "reason": DENIAL_RATE_EXCEEDED,
-                              "ts": ts, "denials": list(window)})
+            self._log.append({"kind": "quarantine", "agent": agent, "by": "broker",
+                              "reason_code": DENIAL_RATE_EXCEEDED, "ts": ts, "denials": list(window)})
             window.clear()
 
     def is_blocked(self, agent: str) -> bool:
@@ -100,8 +100,7 @@ class DefenceManager:
         self._denials.pop(agent, None)
         if self.trust is not None:
             self.trust.release(agent, reviewer)
-        self._log.append({"event": "release", "agent": agent, "reviewer": reviewer,
-                          "ts": ts})
+        self._log.append({"kind": "release", "agent": agent, "by": reviewer, "ts": ts})
 
     # --- extras ------------------------------------------------------------
 
@@ -110,5 +109,7 @@ class DefenceManager:
         return ("QUARANTINE", AGENT_QUARANTINED) if self.is_blocked(agent) else None
 
     def log(self) -> list[dict]:
-        """Quarantine and release events, oldest first (for the A4 audit log). A copy."""
+        """Quarantine and release events, oldest first. A copy. Each entry uses the
+        A4 audit field names (kind, agent, by, reason_code, ts, denials), so it can
+        be passed to broker.audit.log.append() as it is."""
         return [dict(e) for e in self._log]

@@ -55,7 +55,8 @@ def test_a9_fifth_denial_quarantines_and_sixth_message_gets_quarantine():
     assert dm.is_blocked("malicious")
     assert dm.check("malicious") == ("QUARANTINE", AGENT_QUARANTINED)
     entry = dm.log()[-1]
-    assert entry["event"] == "quarantine" and entry["reason"] == DENIAL_RATE_EXCEEDED
+    assert entry["kind"] == "quarantine" and entry["reason_code"] == DENIAL_RATE_EXCEEDED
+    assert entry["by"] == "broker"
     assert entry["denials"] == [0, 1, 2, 3, 4]
 
 
@@ -115,7 +116,7 @@ def test_a9_release_restores_access_and_logs_reviewer():
     dm.release("malicious", reviewer="kissa", ts=100)
     assert not dm.is_blocked("malicious")
     assert dm.check("malicious") is None
-    assert dm.log()[-1] == {"event": "release", "agent": "malicious", "reviewer": "kissa", "ts": 100}
+    assert dm.log()[-1] == {"kind": "release", "agent": "malicious", "by": "kissa", "ts": 100}
 
 
 def test_after_release_the_window_starts_empty():
