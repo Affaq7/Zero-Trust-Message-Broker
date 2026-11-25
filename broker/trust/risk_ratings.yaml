@@ -1,0 +1,78 @@
+# Risk ratings for every action in contracts/action_catalog.yaml (task A1).
+#
+# PROVISIONAL. Recorded in docs/open-questions.md S16. Factors and questions
+# from Amna's Research and Design Plan, section 2.1 (after AI-ZTMM, Mok, Jo and
+# Lee, 2026). Scale approved by Amna on 2026-11-25. Thresholds are starting
+# hypotheses (plan, section 5) and are calibrated in A-R1.
+#
+# Each factor is rated L (Low), M (Medium) or H (High):
+#
+# R  Reversibility: "How difficult is it to undo the action?"
+#    L nothing to undo: only reads, and the result stays inside the agent system
+#    M makes a lasting change that the system itself can undo
+#    H cannot be undone: deletion with no restore, a message delivered to
+#      people, data that has left the system
+# T  Real-time Impact: "Could the action cause immediate harm or disruption?"
+#    L no immediate effect; the result only goes back to the caller
+#    M immediate effect limited to people receiving a message, or a short
+#      disruption to one agent
+#    H immediately changes or removes live data or configuration that other
+#      agents or people depend on
+# D  Data Sensitivity: "How sensitive is the information involved?"
+#    L public or non-sensitive (public web pages)
+#    M internal company information (internal files, aggregates, internal messages)
+#    H individual-level personal data (ssn, bank_account, per-person salary,
+#      home_address; M9) or security and policy configuration
+# E  External Communication: "Does the action communicate with an external entity?"
+#    L stays inside the agent system and its internal services
+#    M reads from an outside source but sends none of our data out
+#    H sends, or can send, content to an address or system outside the
+#      organisation (outside corp.local)
+# P  Privilege Level: "How much authority does the action require?"
+#    L reads internal or aggregate data
+#    M reads individual-level data, or sends messages on the organisation's behalf
+#    H writes, deletes, or changes configuration or policy
+# A  Autonomy Level: "How independently can the action execute?"
+#    L a fixed code path that does exactly what was asked, no LLM decision
+#    M an LLM decides the content or follow-up steps, within a fixed step limit
+#    H acts with no step limit or check, or changes how other agents are controlled
+# S  Impact Scope: "How many records, users, or systems could be affected?"
+#    L one record, file or page, or a single aggregate result
+#    M many records, or several recipients or agents, inside the organisation
+#    H the whole organisation's data, every agent, or recipients outside the
+#      organisation
+#
+# Rules: rate the action itself, not the actions it may trigger next; rate the
+# worst payload the contract allows.
+#
+# individual_data: true when the action returns individual-level personal data
+# (M9). Used by the trust engine (A2) only.
+# Compound high (two or more H) is a flag only (Amna, 2026-11-25); it does not
+# change required_trust. To be revisited after the test scenarios.
+
+schema_version: "0.2"
+
+thresholds:
+  # Minimum trust score T for ALLOW, by action class.
+  Permitted: 0.80
+  Conditional: 0.60
+  # Below this, the answer is DENY whatever the action.
+  deny_below: 0.40
+
+ratings:
+  # R T D E P A S in the order of the scale above.
+  db.query_aggregate:       {R: L, T: L, D: M, E: L, P: L, A: M, S: L, individual_data: false}
+  db.query_rows:            {R: L, T: L, D: H, E: L, P: M, A: M, S: M, individual_data: true}
+  db.update_records:        {R: H, T: H, D: H, E: L, P: H, A: L, S: H, individual_data: false}
+  file.read_internal:       {R: L, T: L, D: M, E: L, P: L, A: L, S: L, individual_data: false}
+  file.delete:              {R: H, T: H, D: M, E: L, P: H, A: L, S: L, individual_data: false}
+  web.fetch_page:           {R: L, T: L, D: L, E: M, P: L, A: L, S: L, individual_data: false}
+  # The contract does not limit recipients to corp.local, so the worst payload
+  # can reach outside the organisation (option A, Amna, 2026-11-25).
+  tool.send_email_internal: {R: H, T: M, D: M, E: H, P: M, A: M, S: H, individual_data: false}
+  tool.send_email_external: {R: H, T: M, D: M, E: H, P: M, A: M, S: H, individual_data: false}
+  # Agreed by Kissa and Amna (S16, 2026-10-24).
+  research.lookup:          {R: L, T: L, D: M, E: L, P: L, A: M, S: M, individual_data: false}
+  planner.request:          {R: L, T: L, D: M, E: L, P: L, A: M, S: M, individual_data: false}
+  mail.deliver:             {R: H, T: M, D: M, E: H, P: M, A: L, S: H, individual_data: false}
+  admin.change_policy:      {R: M, T: H, D: H, E: L, P: H, A: H, S: H, individual_data: false}
