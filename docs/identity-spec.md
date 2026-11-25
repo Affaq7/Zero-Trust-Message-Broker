@@ -154,7 +154,7 @@ Calls for Amna's revocation code (all take the agent name, all are idempotent):
 | Call | Effect | Old tokens afterwards |
 |---|---|---|
 | `suspend(agent)` | status `suspended` | refused with `AGENT_SUSPENDED`; valid again after `restore()` |
-| `revoke(agent)` | status `revoked`, **epoch + 1** | refused with `AGENT_REVOKED`; after `restore()` still refused with `STALE_EPOCH` until a new token is issued with the new epoch |
+| `revoke(agent)` | status `revoked`, **epoch + 1** | refused with `STALE_EPOCH`, also after `restore()`, until a new token is issued with the new epoch; a new token for a still revoked agent is refused with `AGENT_REVOKED` |
 | `restore(agent)` | status `active`, epoch unchanged | see above |
 
 **Epoch rule:** a token is valid only while its `epoch` equals the registry
@@ -220,9 +220,9 @@ its code and `ok=False`. Success returns `ok=True` with `agent`, `role`,
 | 18 | `ath` matches the token | `PROOF_TOKEN_MISMATCH` |
 | 19 | `msg_hash` matches the envelope and `trace_id` equals `env.trace_id` | `MSG_HASH_MISMATCH` |
 | 20 | proof `jti` not seen in the last 60 s (then recorded) | `PROOF_REPLAY` |
-| 21 | registry status is not `revoked` | `AGENT_REVOKED` |
-| 22 | registry status is not `suspended` | `AGENT_SUSPENDED` |
-| 23 | token `epoch ==` registry epoch | `STALE_EPOCH` |
+| 21 | token `epoch ==` registry epoch (checked first, so A10 is `STALE_EPOCH`; K-R2) | `STALE_EPOCH` |
+| 22 | registry status is not `revoked` | `AGENT_REVOKED` |
+| 23 | registry status is not `suspended` | `AGENT_SUSPENDED` |
 
 The proof `jti` is recorded only after the proof's signature and freshness
 pass, so unsigned junk cannot fill the cache.
@@ -291,6 +291,8 @@ only narrow the catalog, never widen it.
 | Code | Step | Owner |
 |---|---|---|
 | `AGENT_QUARANTINED` | 3, quarantine check | Amna |
+| `RECIPIENT_NOT_APPROVED` | 5, request content check (A4: a recipient in `to`, `cc` or `bcc` that the original request did not ask for) | Afaq (F3) |
+| `REPLY_SANITIZED` | 9, reply content check: the `reason_code` of a SANITIZE decision (A2); Amna also uses it as a trust event | Afaq (F3) |
 | `HITL_PENDING`, `HITL_REJECTED`, `HITL_TIMEOUT` | 7, approval queue (F3) | Afaq |
 
 ### Steps 3 and 6, quarantine and trust (Amna, A2 and A3; rules V1 to V5 in `docs/detection-design.md`)
@@ -315,7 +317,7 @@ to the audit log. V2 adds no code: it uses `ROLE_NOT_ALLOWED` and
 | Scenario | Code |
 |---|---|
 | A6 expired token | `TOKEN_EXPIRED` |
-| A10 token used after revocation | `AGENT_REVOKED` (`STALE_EPOCH` once the agent is restored without a new token) |
+| A10 token used after revocation | `STALE_EPOCH` |
 | A14 stolen token, thief signs the proof with own key | `PROOF_KEY_MISMATCH` |
 
 A1, A8 and A13 pass identity and are refused by policy with `ROLE_NOT_ALLOWED`;
