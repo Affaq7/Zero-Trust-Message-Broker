@@ -250,7 +250,11 @@ Forged broker fields on a request are **removed, not rejected**:
 `validate_envelope` returns `ok=True` with `reason_code="BROKER_FIELDS_STRIPPED"`
 as a note for the audit log. An unknown action skips the payload check and is
 refused by policy with `UNKNOWN_ACTION`. The injection-cue scan never blocks;
-it only sets `injection_cue=True`.
+it only sets `injection_cue=True`. It reads only the free-text fields of Amna's
+rule V3 (`justification`, `query`, `request`, `suggested_action`, `subject`,
+`body`). Step 1 accepts requests only: a `response` sent to the broker is
+`BAD_ENVELOPE` (replies are checked in step 9). A `msg_id` is recorded only
+when the whole message passes, so a rejected message does not use up its id.
 
 ### Step 2, identity: `broker/identity/verify.py` (Kissa, K2)
 
