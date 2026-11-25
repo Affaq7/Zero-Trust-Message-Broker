@@ -108,7 +108,8 @@ class DefenceManager:
         self.blocked.discard(agent)
         if self.trust is not None:
             self.trust.release(agent, reviewer)
-        self._log.append({"event": "release", "agent": agent, "reviewer": reviewer, "ts": ts})
+        # Same entry shape as the real DefenceManager.log(): A4's audit field names.
+        self._log.append({"kind": "release", "agent": agent, "by": reviewer, "ts": ts})
 
     def revoke(self, agent: str) -> None:
         """Test helper: block the agent as a quarantine would."""

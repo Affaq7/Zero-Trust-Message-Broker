@@ -421,27 +421,18 @@ class Broker:
                 now: float) -> Envelope:
         """Record a decision for a verified sender (trust, V1) and build a refusal if needed.
 
-        Count once: one trust update per message, whatever the reason. A DENY that makes
-        the defence manager quarantine the agent (V1, a new "quarantine" event in its log)
-        becomes QUARANTINE DENIAL_RATE_EXCEEDED.
+        Count once: one trust update per message, whatever the reason. The decision is never
+        changed here: the denial that trips V1 (5 in 60 s) stays a DENY with its own reason
+        code; the quarantine itself is the defence manager's log event (kind quarantine,
+        reason_code DENIAL_RATE_EXCEEDED, audited at step 10), and the agent's next message
+        gets QUARANTINE / AGENT_QUARANTINED at step 3 (docs/scenario-control-map.md, A9).
         """
         M = self.modules
         agent = tr.agent
         before = M.trust.get(agent)
         after = M.trust.update(agent, decision, risk, cue, events=list(tr.events))
         tr.trust = _trust_view(before, after)
-        has_log = callable(getattr(M.defence, "log", None))
-        n_before = len(M.defence.log()) if has_log else 0
-        was_blocked = M.defence.is_blocked(agent)
         M.defence.record_decision(agent, decision, now)
-        if decision == "DENY":
-            if has_log:
-                tripped = any(e.get("event") == "quarantine" and e.get("agent") == agent
-                              for e in M.defence.log()[n_before:])
-            else:
-                tripped = not was_blocked and M.defence.is_blocked(agent)
-            if tripped:
-                decision, reason = "QUARANTINE", "DENIAL_RATE_EXCEEDED"
         tr.decision, tr.reason_code = decision, reason
         return self._refusal(raw, tr.env, decision, reason)
 
@@ -565,20 +556,25 @@ class Broker:
         return signed
 
     def _audit_defence_events(self) -> None:
-        """Append the defence manager's new events (quarantine, release) to the audit log."""
+        """Append the defence manager's new events (quarantine, release) to the audit log.
+
+        DefenceManager.log() (broker/defence/quarantine.py) returns its whole list on every
+        call, each entry already in A4's field names: kind, agent, by, reason_code, ts,
+        denials. A cursor makes sure each entry is appended exactly once. Only ``ts`` is
+        normalised: the broker-clock float (or None on release) becomes an ISO time, as in
+        every other audit line.
+        """
         get_log = getattr(self.modules.defence, "log", None)
         if not callable(get_log):
             return
         entries = get_log()
         new, self._defence_seen = entries[self._defence_seen:], len(entries)
         for e in new:
-            kind = e.get("event")
             raw_ts = e.get("ts")
-            ts = _iso(raw_ts) if isinstance(raw_ts, (int, float)) else _iso(self._clock())
-            entry = {"kind": kind, "ts": ts, "agent": e.get("agent"),
-                     "by": e.get("reviewer") or e.get("by") or "broker",
-                     "reason_code": e.get("reason"), "denials": e.get("denials")}
-            entry_hash = self.modules.append(entry) if kind in AUDIT_EVENT_KINDS else None
+            ts = _iso(raw_ts) if isinstance(raw_ts, (int, float)) else (raw_ts or _iso(self._clock()))
+            entry = {"kind": e.get("kind"), "ts": ts, "agent": e.get("agent"), "by": e.get("by"),
+                     "reason_code": e.get("reason_code"), "denials": e.get("denials")}
+            entry_hash = self.modules.append(entry) if entry["kind"] in AUDIT_EVENT_KINDS else None
             self.events.append({**entry, "entry_hash": entry_hash})
 
     def refuse_unread(self, reason: str) -> Envelope:

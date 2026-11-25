@@ -206,22 +206,22 @@ def test_quarantine_path_and_release():
     assert client.post("/admin/release", json={"agent": "planner", "reviewer": ""}).status_code == 400
 
 
-def test_a_denial_that_trips_the_denial_rate_becomes_quarantine():
-    class V1(stubs.DefenceManager):              # quarantines on the second DENY, logging it as PR #8 does
+def test_the_denial_that_trips_the_rate_stays_a_deny_and_the_next_message_is_quarantined():
+    class V1(stubs.DefenceManager):              # quarantines on the second DENY, logging it as main's does
         def record_decision(self, agent, decision, ts):
             super().record_decision(agent, decision, ts)
             if sum(1 for a, d, _ in self.decisions if a == agent and d == "DENY") == 2:
                 self.blocked.add(agent)
-                self._log.append({"event": "quarantine", "agent": agent, "reason": "DENIAL_RATE_EXCEEDED",
-                                  "ts": ts, "denials": [ts, ts]})
+                self._log.append({"kind": "quarantine", "agent": agent, "by": "broker",
+                                  "reason_code": "DENIAL_RATE_EXCEEDED", "ts": ts, "denials": [ts, ts]})
 
     broker, receiver = make_broker(Modules(defence=V1(), evaluate_policy=_deny_policy))
     first = broker.handle(raw(n1_request()), HEADERS)
     second = broker.handle(raw(n1_request()), HEADERS)
     third = broker.handle(raw(n1_request()), HEADERS)
     assert (first.decision, first.reason_code) == ("DENY", "ROLE_NOT_ALLOWED")
-    assert (second.decision, second.reason_code) == ("QUARANTINE", "DENIAL_RATE_EXCEEDED")
-    assert (third.decision, third.reason_code) == ("QUARANTINE", "AGENT_QUARANTINED")
+    assert (second.decision, second.reason_code) == ("DENY", "ROLE_NOT_ALLOWED")     # A9: still a DENY
+    assert (third.decision, third.reason_code) == ("QUARANTINE", "AGENT_QUARANTINED")  # step 3
     assert receiver.calls == []
 
 
@@ -463,17 +463,17 @@ def test_state_reports_a_trust_quarantine_as_quarantined():
 # --- DefenceManager.log() returns the whole list each time: each entry is audited once ---------------------
 
 def test_defence_log_entries_are_audited_exactly_once():
-    class V1(stubs.DefenceManager):              # quarantines on the first DENY and logs it, like PR #8
+    class V1(stubs.DefenceManager):              # quarantines on the first DENY and logs it, like main's
         def record_decision(self, agent, decision, ts):
             super().record_decision(agent, decision, ts)
             if decision == "DENY" and agent not in self.blocked:
                 self.blocked.add(agent)
-                self._log.append({"event": "quarantine", "agent": agent, "reason": "DENIAL_RATE_EXCEEDED",
-                                  "ts": ts, "denials": [ts]})
+                self._log.append({"kind": "quarantine", "agent": agent, "by": "broker",
+                                  "reason_code": "DENIAL_RATE_EXCEEDED", "ts": ts, "denials": [ts]})
 
     audit = stubs.AuditLog()
     broker, _ = make_broker(Modules(defence=V1(), evaluate_policy=_deny_policy, append=audit.append))
-    assert broker.handle(raw(n1_request()), HEADERS).reason_code == "DENIAL_RATE_EXCEEDED"
+    assert broker.handle(raw(n1_request()), HEADERS).reason_code == "ROLE_NOT_ALLOWED"
     assert broker.handle(raw(n1_request()), HEADERS).reason_code == "AGENT_QUARANTINED"
     assert broker.handle(raw(n1_request()), HEADERS).reason_code == "AGENT_QUARANTINED"
     kinds = [e.get("kind") for e in audit.entries]
