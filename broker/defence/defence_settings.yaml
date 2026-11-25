@@ -1,0 +1,12 @@
+# Quarantine settings (task A3). PROVISIONAL starting values (Amna's design
+# plan 5.3; docs/detection-design.md V1), approved by Amna on 2026-11-25.
+
+# V1: this many DENY decisions for one agent within window_seconds puts it in
+# Quarantined. Only denials where identity was verified count.
+deny_limit: 5
+window_seconds: 60
+
+# Who may release a quarantined agent (plan 5.1: release only through an
+# authorised call). The broker's POST /admin/release route (Afaq) also checks an
+# admin key; this list is the second check.
+reviewers: [amna, kissa, afaq]
