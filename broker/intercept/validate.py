@@ -23,9 +23,13 @@ from contracts.payloads import UnknownActionError, validate_payload
 from contracts.version import SCHEMA_VERSION
 
 MAX_PAYLOAD_BYTES = 64 * 1024          # compact JSON, UTF-8
+MAX_BODY_BYTES = 2 * MAX_PAYLOAD_BYTES  # whole message; checked on raw bytes before parsing
 MAX_AGE_SECONDS = 60
 MAX_FUTURE_SECONDS = 5                 # clock leeway, same as identity
 DUPLICATE_WINDOW_SECONDS = 120         # longer than MAX_AGE, so a replay is stale or a duplicate
+# Most msg_ids held at once. When full the oldest is dropped; a replay of a dropped
+# id within its 60 s age still carries the same proof jti, so step 2 stops it (PROOF_REPLAY).
+MAX_TRACKED_IDS = 100_000
 
 # Free-text payload fields (docs/detection-design.md, rule V3).
 CUE_FIELDS = ("justification", "query", "request", "suggested_action", "subject", "body")
@@ -88,11 +92,13 @@ def has_injection_cue(payload: dict[str, Any]) -> bool:
 class EnvelopeValidator:
     """Step 1 with its own msg_id cache."""
 
-    def __init__(self) -> None:
-        self.seen_ids = ReplayCache(window=DUPLICATE_WINDOW_SECONDS)
+    def __init__(self, max_tracked_ids: int = MAX_TRACKED_IDS) -> None:
+        self.seen_ids = ReplayCache(window=DUPLICATE_WINDOW_SECONDS, max_entries=max_tracked_ids)
 
     def validate_body(self, body: bytes, now: float | None = None) -> ValidationResult:
-        """Parse an HTTP body as UTF-8 JSON, then validate it."""
+        """Check the size of the raw bytes, then parse them as UTF-8 JSON and validate."""
+        if len(body) > MAX_BODY_BYTES:           # before decoding or parsing anything
+            return _fail("PAYLOAD_TOO_LARGE")
         try:
             raw = json.loads(body.decode("utf-8"))
         except ValueError:                       # bad UTF-8 or bad JSON
@@ -112,7 +118,7 @@ class EnvelopeValidator:
     def _checked(self, raw: Any, now: float) -> tuple[Envelope, bool]:
         if not isinstance(raw, dict):
             raise _Reject("MALFORMED_JSON")
-        if _payload_size(raw.get("payload")) > MAX_PAYLOAD_BYTES:
+        if _payload_size(raw) > MAX_BODY_BYTES or _payload_size(raw.get("payload")) > MAX_PAYLOAD_BYTES:
             raise _Reject("PAYLOAD_TOO_LARGE")
         if raw.get("schema_version") != SCHEMA_VERSION:
             raise _Reject("BAD_SCHEMA_VERSION")

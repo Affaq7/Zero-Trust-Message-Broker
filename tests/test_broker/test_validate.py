@@ -7,10 +7,13 @@ from pathlib import Path
 import pytest
 
 from broker.intercept import validate as validate_module
+from broker.identity.replay import ReplayCache
 from broker.intercept.validate import (
     CUE_FIELDS,
     DUPLICATE_WINDOW_SECONDS,
+    MAX_BODY_BYTES,
     MAX_PAYLOAD_BYTES,
+    MAX_TRACKED_IDS,
     EnvelopeValidator,
     ValidationResult,
     validate_body,
@@ -261,3 +264,67 @@ def test_module_level_functions_use_the_shared_validator(monkeypatch):
     fresh = raw(timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
     assert validate_envelope(fresh).ok
     assert validate_body(json.dumps(fresh).encode()).reason_code == "DUPLICATE_MSG"
+
+
+# === Limits under load (Afaq's review, 26 Nov) ==============================================
+
+def test_body_limit_is_128_kb_and_twice_the_payload_limit():
+    assert MAX_BODY_BYTES == 128 * 1024 == 2 * MAX_PAYLOAD_BYTES
+
+
+def test_oversized_body_is_refused_before_it_is_parsed(validator, monkeypatch):
+    def must_not_parse(*_args, **_kwargs):
+        raise AssertionError("json.loads was called on an oversized body")
+    monkeypatch.setattr(validate_module.json, "loads", must_not_parse)
+    body = b'{"payload": "' + b"x" * MAX_BODY_BYTES + b'"}'
+    assert validator.validate_body(body, now=NOW).reason_code == "PAYLOAD_TOO_LARGE"
+
+
+def test_body_at_the_limit_is_parsed(validator):
+    body = b" " * (MAX_BODY_BYTES - 2) + b"{}"
+    assert len(body) == MAX_BODY_BYTES
+    assert validator.validate_body(body, now=NOW).reason_code == "BAD_SCHEMA_VERSION"   # parsed, then checked
+
+
+@pytest.mark.parametrize("field, value", [
+    ("resource", "r" * MAX_BODY_BYTES),
+    ("delegation_chain", ["user"] + ["planner"] * 20000),
+], ids=["huge-resource", "huge-chain"])           # short ids: Windows caps environment variables
+def test_oversized_envelope_outside_the_payload_is_refused(validator, field, value):
+    """validate() is also called with an already parsed dict (the broker app), so it checks the whole size."""
+    assert check(validator, raw(**{field: value})).reason_code == "PAYLOAD_TOO_LARGE"
+
+
+def test_replay_cache_cap_drops_the_oldest_entry():
+    cache = ReplayCache(window=120, max_entries=3)
+    for i, jti in enumerate(("a", "b", "c", "d")):
+        assert cache.seen_or_record(jti, now=1000 + i) is False
+    assert len(cache) == 3
+    assert cache.seen_or_record("d", now=1004) is True      # newest kept
+    assert cache.seen_or_record("a", now=1004) is False     # oldest was dropped
+
+
+def test_replay_cache_without_a_cap_is_unchanged():
+    cache = ReplayCache(window=120)
+    for i in range(500):
+        cache.seen_or_record(f"j{i}", now=1000)
+    assert len(cache) == 500
+
+
+@pytest.mark.parametrize("max_entries", [0, -1])
+def test_replay_cache_cap_must_be_positive(max_entries):
+    with pytest.raises(ValueError):
+        ReplayCache(max_entries=max_entries)
+
+
+def test_validator_caps_the_id_cache_by_default():
+    assert MAX_TRACKED_IDS == 100_000
+    assert EnvelopeValidator().seen_ids.max_entries == MAX_TRACKED_IDS
+
+
+def test_a_flood_of_unique_ids_cannot_grow_the_cache_past_the_cap():
+    validator = EnvelopeValidator(max_tracked_ids=50)
+    for i in range(400):
+        assert check(validator, raw(msg_id=f"flood-{i}")).ok
+    assert len(validator.seen_ids) == 50
+    assert check(validator, raw(msg_id="flood-399")).reason_code == "DUPLICATE_MSG"   # recent ones still caught
