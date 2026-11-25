@@ -35,10 +35,13 @@ jobs:
           cache-dependency-path: |
             pyproject.toml
             constraints.txt
-      - name: Install dependencies (as in CLAUDE.md)
-        run: python -m pip install -e ".[dev,agents]" -c constraints.txt
+      # The project's own tests require the interpreter to be <repo>/.venv (CLAUDE.md).
+      - name: Install dependencies into .venv (as in CLAUDE.md)
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e ".[dev,agents]" -c constraints.txt
       - name: Run the test suite (the live-Ollama test stays skipped)
-        run: python -m pytest -q
+        run: .venv/bin/python -m pytest -q
 
   secrets-and-forbidden-files:
     name: secrets-and-forbidden-files
@@ -94,13 +97,15 @@ jobs:
           cache-dependency-path: |
             pyproject.toml
             constraints.txt
-      - name: Install dependencies
-        run: python -m pip install -e ".[dev,agents]" -c constraints.txt
+      - name: Install dependencies into .venv
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -e ".[dev,agents]" -c constraints.txt
       - name: Run N1 with the fake LLM
-        run: python -m runner --scenario N1 --llm fake --reps 1 --results-dir "$RUNNER_TEMP/smoke-n1"
+        run: .venv/bin/python -m runner --scenario N1 --llm fake --reps 1 --results-dir "$RUNNER_TEMP/smoke-n1"
       - name: Run A1 with the fake LLM
-        run: python -m runner --scenario A1 --llm fake --reps 1 --results-dir "$RUNNER_TEMP/smoke-a1"
+        run: .venv/bin/python -m runner --scenario A1 --llm fake --reps 1 --results-dir "$RUNNER_TEMP/smoke-a1"
       - name: Assert N1 task_completed and A1 attack_succeeded
         run: |
-          python scripts/ci/check_smoke.py "$RUNNER_TEMP/smoke-n1" N1 task_completed
-          python scripts/ci/check_smoke.py "$RUNNER_TEMP/smoke-a1" A1 attack_succeeded
+          .venv/bin/python scripts/ci/check_smoke.py "$RUNNER_TEMP/smoke-n1" N1 task_completed
+          .venv/bin/python scripts/ci/check_smoke.py "$RUNNER_TEMP/smoke-a1" A1 attack_succeeded

@@ -15,7 +15,7 @@ Set exactly these four as required status checks:
 
 | Check | What it does | Typical time |
 |---|---|---|
-| `tests` | Installs `.[dev,agents]` with `constraints.txt` and runs `python -m pytest -q`. The live-Ollama test stays skipped (`RUN_OLLAMA_TESTS` is not set). | install + suite |
+| `tests` | Creates `.venv` (the project's tests require it), installs `.[dev,agents]` with `constraints.txt` and runs `python -m pytest -q`. The live-Ollama test stays skipped (`RUN_OLLAMA_TESTS` is not set). | install + suite |
 | `secrets-and-forbidden-files` | `scripts/ci/check_forbidden.py`: fails if the PR adds or changes a forbidden file, or adds a line that looks like a secret or contains a seeded sensitive value. | seconds |
 | `protected-paths` | `scripts/ci/check_paths.py`: contracts, frozen prompts and folder ownership, driven by `.github/ownership.json` and the PR's labels. | seconds |
 | `direct-mode-smoke` | After `tests` passes: runs N1 and A1 in direct mode with the fake LLM and asserts N1 `task_completed` and A1 `attack_succeeded` are `true` in `results.csv`. | about 1 minute + install |
