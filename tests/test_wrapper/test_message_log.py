@@ -94,10 +94,19 @@ def test_misdirected_request_logged_without_response(client, log_dir):
     assert [rec["direction"] for rec in read_log(log_dir)] == ["in"]
 
 
-def test_broker_mode_writes_nothing(log_dir):
+def test_broker_mode_logs_request_and_reply_like_direct_mode(log_dir):
+    # The 501 is gone: in broker mode the wrapper serves the requests the broker forwards
+    # and logs them exactly as in direct mode (full envelopes, never the token or proof).
     c = TestClient(create_app(Settings(mode="broker", agent_name="dummy", log_dir=log_dir)))
-    assert post(c, request_dict()).status_code == 501
-    assert read_log(log_dir) == []
+    r = post(c, request_dict())
+    assert r.status_code == 200 and r.json()["msg_type"] == "response"
+    records = read_log(log_dir)
+    assert [rec["direction"] for rec in records] == ["in", "out"]
+    assert all(set(rec) == {"logged_at", "logged_by", "direction", "envelope"} for rec in records)
+    assert Envelope.model_validate(records[0]["envelope"]) == Envelope.model_validate(request_dict())
+    assert records[1]["envelope"] == r.json()
+    text = (log_dir / "dummy.jsonl").read_text(encoding="utf-8")
+    assert TOKEN not in text and PROOF not in text
 
 
 def test_log_dir_created_lazily(log_dir):
