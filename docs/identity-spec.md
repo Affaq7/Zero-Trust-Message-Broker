@@ -303,8 +303,10 @@ the final single decision per scenario.
 frozen contract. Proposal: add `epoch: int` (strict, `>= 0`) with default `0`.
 This is additive: existing stub tokens and all tests stay valid. The broker
 itself requires the claim to be present (check 6). Logged in
-`docs/open-questions.md`. Until it is agreed, K1 cannot issue tokens that pass
-`TokenClaims`.
+`docs/open-questions.md`. Until it is agreed, the broker uses its own
+`broker.identity.tokens.IdentityClaims` (TokenClaims plus `epoch`), so K1 works
+without touching `contracts/`; only code that validates issued tokens with the
+plain `TokenClaims` would reject them.
 
 Not a contract change: the leeway, lifetime, proof window and cache sizes live
 as constants in `broker/identity/`. The `# PROOF STUB` block in
@@ -314,10 +316,17 @@ be removed with team agreement.
 ## 10. For Afaq: what changes on the sender side
 
 1. `wrapper/credentials.py` loads `keys/<file>.json` and returns its token for
-   every receiver. Which file a process uses is set by the operator (proposal:
-   an `AGENT_CREDENTIALS` variable such as `research-2`, default the agent
-   name). I make the smallest edit there in K1 and tell you first.
-2. `wrapper/send.py` sets `X-Agent-Proof: make_proof(request, token, private_key)`
-   instead of `make_proof_stub(request)`.
-3. Scripted attacks: A6 uses a token from `--expired`; A14 uses
+   every receiver (built in K1). It is **opt-in**: the operator sets
+   `AGENT_CREDENTIALS=<file name>` per process (for example `research-2`, or
+   `research-stolen` for an impostor running as `research`); `AGENT_KEYS_DIR`
+   overrides the folder. Without the variable the old stub is used, so direct
+   runs and their tests are unchanged. A file whose agent or role differs from
+   the process fails at startup. The runner strips every `AGENT_` variable from
+   the parent environment, so it needs one line to pass `AGENT_CREDENTIALS` per
+   agent (Afaq's change).
+2. Tokens last 60 minutes from issue time: run `scripts/issue_credentials.py --force`
+   shortly before a broker-mode run.
+3. `wrapper/send.py` sets `X-Agent-Proof: make_proof(request, token, private_key)`
+   instead of `make_proof_stub(request)`; the key is `FileCredentials.private_key`.
+4. Scripted attacks: A6 uses a token from `--expired`; A14 uses
    `research-stolen.json`'s token with a freshly generated key for the proof.
