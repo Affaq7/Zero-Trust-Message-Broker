@@ -1,10 +1,10 @@
 """F1 follow-up: real-module loading per function, /admin/release with the admin token,
-the defence manager of PR #8 and the audit log of PR #9.
+the defence manager (A3, PR #8) and the audit log (A4, PR #9).
 
-PR #8 and #9 are not on main yet, so their documented interfaces are replaced by small
-fakes installed as modules (broker.defence.quarantine, broker.defence.revocation,
-broker.audit.log). No network, no live model, no real keys: the signing key is made
-here in a temporary folder."""
+Most tests use small fakes installed as modules (broker.defence.quarantine,
+broker.defence.revocation, broker.audit.log) that copy the shapes on main; the tests at
+the end use the REAL DefenceManager and TrustEngine from main. No network, no live model,
+no real keys: the signing key is made here in a temporary folder."""
 
 import sys
 import types
@@ -32,7 +32,8 @@ N1 = dict(sender="planner", receiver="database", action="db.query_aggregate", re
 # --- fakes of the PR #8 and PR #9 interfaces ---------------------------------------------------
 
 class FakeDefenceManager:
-    """PR #8 interface: DefenceManager(trust=None, settings=None); V1 = 5 DENY in 60 s."""
+    """main's interface: DefenceManager(trust=None, settings=None); V1 = 5 DENY in 60 s;
+    log() entries in A4's field names (kind, agent, by, reason_code, ts, denials)."""
 
     def __init__(self, trust=None, settings=None):
         self.s = settings or {"deny_limit": 5, "window_seconds": 60, "reviewers": ["amna", "kissa", "afaq"]}
@@ -50,8 +51,8 @@ class FakeDefenceManager:
             window.popleft()
         if len(window) >= self.s["deny_limit"]:
             self._blocked.add(agent)
-            self._log.append({"event": "quarantine", "agent": agent, "reason": "DENIAL_RATE_EXCEEDED",
-                              "ts": ts, "denials": list(window)})
+            self._log.append({"kind": "quarantine", "agent": agent, "by": "broker",
+                              "reason_code": "DENIAL_RATE_EXCEEDED", "ts": ts, "denials": list(window)})
             window.clear()
 
     def is_blocked(self, agent):
@@ -70,7 +71,7 @@ class FakeDefenceManager:
         self._denials.pop(agent, None)
         if self.trust is not None:
             self.trust.release(agent, reviewer)
-        self._log.append({"event": "release", "agent": agent, "reviewer": reviewer, "ts": ts})
+        self._log.append({"kind": "release", "agent": agent, "by": reviewer, "ts": ts})
 
     def log(self):
         return [dict(e) for e in self._log]
@@ -261,8 +262,7 @@ def test_release_success_restores_trust_and_is_audited(fake_defence, fake_audit,
     broker = make(mods)
     broker.start(signing_key_path=signing_key)
     outs = quarantine_planner(broker)
-    assert [o.decision for o in outs] == ["DENY"] * 4 + ["QUARANTINE"]
-    assert outs[-1].reason_code == "DENIAL_RATE_EXCEEDED"
+    assert [(o.decision, o.reason_code) for o in outs] == [("DENY", "ROLE_NOT_ALLOWED")] * 5   # A9
     assert broker.handle(raw_n1(), {}).reason_code == "AGENT_QUARANTINED"
 
     client = admin_client(broker)
@@ -337,3 +337,103 @@ def test_no_admin_token_configured_refuses_every_admin_call(fake_defence):
     assert client.get("/health").json()["admin"] == "disabled"
     r = admin_client(broker, token=None, header="").post("/admin/release", json={"agent": "planner", "reviewer": "afaq"})
     assert r.status_code == 403
+
+
+# --- the REAL DefenceManager and TrustEngine from main (A3, A2); other modules stubbed -------------
+
+class Clock:
+    """The broker's clock: 1000.0, 1001.0, ... one second per reading."""
+
+    def __init__(self):
+        self.t = 999.0
+
+    def __call__(self):
+        self.t += 1.0
+        return self.t
+
+
+def real_defence_broker():
+    from broker.defence.quarantine import DefenceManager as RealDefence
+    from broker.trust.trust import TrustEngine as RealTrust
+    mods = Modules.with_real(["defence", "trust"])
+    assert isinstance(mods.defence, RealDefence) and isinstance(mods.trust, RealTrust)
+    assert mods.defence.trust is mods.trust                          # one shared trust engine
+    audit = FakeAudit()
+    mods.append = audit.append
+    mods.evaluate_policy = deny_policy
+    seen = []
+
+    def receiver_never(request):
+        seen.append(request)
+        return httpx.Response(500)
+
+    broker = Broker(mods, client=httpx.Client(transport=httpx.MockTransport(receiver_never)),
+                    agent_urls={"database": "http://database.test"}, clock=Clock())
+    return broker, audit, seen
+
+
+def quarantine_events(audit):
+    return [e for e in audit.entries if e["kind"] == "quarantine"]
+
+
+def test_real_defence_five_denials_then_quarantine_at_step_3():
+    broker, audit, forwarded = real_defence_broker()
+    outs = [broker.handle(raw_n1(), {}) for _ in range(6)]
+    assert [(o.decision, o.reason_code) for o in outs[:5]] == [("DENY", "ROLE_NOT_ALLOWED")] * 5
+    assert (outs[5].decision, outs[5].reason_code) == ("QUARANTINE", "AGENT_QUARANTINED")
+    assert broker.recent_events(1)[0]["step"] == 3 and forwarded == []          # never forwarded
+    assert broker.modules.defence.is_blocked("planner")
+
+
+def test_real_defence_quarantine_event_is_audited_once_with_the_five_denial_times():
+    broker, audit, _ = real_defence_broker()
+    for _ in range(5):
+        broker.handle(raw_n1(), {})
+    [event] = quarantine_events(audit)
+    decision_times = [e["ts"] for e in audit.entries if e["kind"] == "decision"]
+    assert (event["agent"], event["by"], event["reason_code"]) == ("planner", "broker", "DENIAL_RATE_EXCEEDED")
+    assert len(event["denials"]) == 5 and event["denials"] == sorted(event["denials"])
+    assert len(decision_times) == 5
+    for _ in range(3):                                                 # later messages: still one quarantine line
+        assert broker.handle(raw_n1(), {}).reason_code == "AGENT_QUARANTINED"
+    assert len(quarantine_events(audit)) == 1
+    assert sum(1 for e in audit.entries if e["kind"] == "decision") == 8
+
+
+def test_real_defence_release_writes_one_release_event_by_the_reviewer():
+    broker, audit, _ = real_defence_broker()
+    for _ in range(5):
+        broker.handle(raw_n1(), {})
+    r = admin_client(broker).post("/admin/release", json={"agent": "planner", "reviewer": "kissa"})
+    assert r.status_code == 200 and r.json()["state"] == "Restricted" and r.json()["T"] == 0.5
+    # One more message, allowed by policy this time: no duplicate lines. (A further DENY right after
+    # release would re-quarantine through the trust engine: release restarts T at 0.50 with no clean
+    # history, and one DENY takes it below 0.40. That is the A2 calibration, not tested here.)
+    broker.modules.evaluate_policy = stubs.evaluate_policy
+    broker.handle(raw_n1(), {})
+    releases = [e for e in audit.entries if e["kind"] == "release"]
+    assert len(releases) == 1 and (releases[0]["agent"], releases[0]["by"]) == ("planner", "kissa")
+    assert len(quarantine_events(audit)) == 1
+    assert admin_client(broker).post("/admin/release",                 # not quarantined any more
+                                     json={"agent": "planner", "reviewer": "kissa"}).status_code == 400
+    assert len([e for e in audit.entries if e["kind"] == "release"]) == 1
+
+
+def test_real_defence_never_counts_a_message_whose_identity_failed():
+    broker, audit, _ = real_defence_broker()
+    genuine = broker.modules.verify_identity
+
+    def forged(headers, env):
+        return IdentityResult(ok=False, agent=None, role=None, instance_id=None, epoch=None,
+                              reason_code="PROOF_KEY_MISMATCH")
+
+    broker.modules.verify_identity = forged
+    for _ in range(10):
+        assert broker.handle(raw_n1(), {}).reason_code == "PROOF_KEY_MISMATCH"
+    broker.modules.verify_identity = genuine
+    for _ in range(4):                                                 # 4 real denials: below the limit of 5
+        assert broker.handle(raw_n1(), {}).decision == "DENY"
+    assert not broker.modules.defence.is_blocked("planner")
+    assert broker.modules.defence.log() == [] and quarantine_events(audit) == []
+    assert broker.handle(raw_n1(), {}).decision == "DENY"              # the 5th real denial trips V1
+    assert broker.modules.defence.is_blocked("planner") and len(quarantine_events(audit)) == 1
