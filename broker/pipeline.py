@@ -40,7 +40,7 @@ import sys
 import threading
 import time
 import uuid
-from collections import Counter, deque
+from collections import Counter, OrderedDict, deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -70,6 +70,12 @@ DENIED_PAYLOAD = {"status": "denied"}
 PENDING_PAYLOAD = {"status": "pending"}
 DEFAULT_FORWARD_TIMEOUT_S = 60.0
 MAX_EVENTS = 1000
+# V4 (BurstDetector) counts requests per (agent, trace_id). The broker never sees a task end
+# (every request has parent_msg_id = null, and the runner's /task reply does not pass through
+# it), so traces are forgotten when idle, and the number tracked is capped.
+TRACE_IDLE_SECONDS = 900           # the runner's task timeout; a trace this quiet is over
+TRACE_SWEEP_INTERVAL_SECONDS = 60  # idle traces are looked for at most once a minute
+MAX_TRACKED_TRACES = 10_000        # beyond this the least recently seen trace is forgotten
 
 
 class BrokerStartupError(RuntimeError):
@@ -260,6 +266,8 @@ class Broker:
         self.pending: dict[str, dict] = {}       # approval_id -> metadata (F3 adds the queue)
         self._pending_envs: dict[str, Envelope] = {}
         self._epochs: dict[str, int | None] = {}
+        self._trace_seen: OrderedDict[str, float] = OrderedDict()   # trace_id -> last seen, oldest first
+        self._last_sweep: float | None = None
         self._defence_seen = 0                   # how many DefenceManager.log() events are audited
         self.startup: dict[str, Any] = {"started": False, "audit_configured": False,
                                         "revocation_registry": False}
@@ -353,6 +361,7 @@ class Broker:
                 M.defence.record_decision(agent, "QUARANTINE", now)
                 return self._stop(raw, tr, "QUARANTINE", "AGENT_QUARANTINED")
 
+            self._track_trace(env.trace_id, now)                         # forget idle traces first
             for event in M.burst.observe(agent, env.trace_id):          # V4, counted per request
                 if event not in tr.events:
                     tr.events.append(event)
@@ -435,6 +444,32 @@ class Broker:
         M.defence.record_decision(agent, decision, now)
         tr.decision, tr.reason_code = decision, reason
         return self._refusal(raw, tr.env, decision, reason)
+
+    def _track_trace(self, trace_id: str, now: float) -> None:
+        """Record that ``trace_id`` is active now, and forget traces that are over (no timer thread).
+
+        Called under the lock, before BurstDetector.observe(), so a trace that comes back after
+        being idle starts counting again from zero.
+        """
+        seen = self._trace_seen
+        if self._last_sweep is None or now - self._last_sweep >= TRACE_SWEEP_INTERVAL_SECONDS:
+            self._last_sweep = now
+            while seen:                                   # oldest first: stop at the first active one
+                oldest, last = next(iter(seen.items()))
+                if now - last <= TRACE_IDLE_SECONDS:
+                    break
+                seen.popitem(last=False)
+                self._forget_trace(oldest)
+        seen[trace_id] = now
+        seen.move_to_end(trace_id)
+        while len(seen) > MAX_TRACKED_TRACES:
+            oldest, _ = seen.popitem(last=False)
+            self._forget_trace(oldest)
+
+    def _forget_trace(self, trace_id: str) -> None:
+        forget = getattr(self.modules.burst, "forget", None)
+        if callable(forget):
+            forget(trace_id)
 
     def _add_pending(self, env: Envelope, policy_reason: str, now: float) -> None:
         approval_id = str(uuid.uuid4())

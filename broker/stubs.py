@@ -183,6 +183,9 @@ class BurstDetector:
     def observe(self, sender: str, trace_id: str) -> tuple[str, ...]:
         return ()
 
+    def forget(self, trace_id: str) -> None:
+        """Nothing is counted, so nothing to forget."""
+
 
 # --- step 10: audit and signature (real: broker/audit/, Amna) -----------------------------
 
