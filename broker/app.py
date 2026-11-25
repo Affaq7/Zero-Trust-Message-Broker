@@ -31,7 +31,7 @@ from starlette.concurrency import run_in_threadpool
 from broker.pipeline import Broker, UnknownAgentError
 
 ADMIN_HEADER = "X-Admin-Token"
-ADMIN_TOKEN_ENV = "BROKER_ADMIN_TOKEN"
+ADMIN_ENV_VAR = "BROKER_ADMIN_TOKEN"
 
 
 class ReleaseRequest(BaseModel):
@@ -48,7 +48,7 @@ def create_app(broker: Broker | None = None, environ: Mapping[str, str] = os.env
     broker = broker or Broker(environ=environ)
     if start and not broker.startup["started"]:
         broker.start()                                   # raises BrokerStartupError with a fix
-    admin_token = environ.get(ADMIN_TOKEN_ENV, "")
+    admin_token = environ.get(ADMIN_ENV_VAR, "")
     app = FastAPI(title="Zero Trust Message Broker", version="0.1.0")
     app.state.broker = broker
 
@@ -56,8 +56,8 @@ def create_app(broker: Broker | None = None, environ: Mapping[str, str] = os.env
         """None when the caller may use an admin route; otherwise the refusal (and an event)."""
         if not admin_token:
             broker.admin_event("admin_refused", route=route, outcome="403 admin disabled: "
-                               f"{ADMIN_TOKEN_ENV} not set")
-            return _error(403, f"admin routes are disabled: {ADMIN_TOKEN_ENV} is not set")
+                               f"{ADMIN_ENV_VAR} not set")
+            return _error(403, f"admin routes are disabled: {ADMIN_ENV_VAR} is not set")
         given = request.headers.get(ADMIN_HEADER, "")
         if not hmac.compare_digest(given.encode("utf-8"), admin_token.encode("utf-8")):
             broker.admin_event("admin_refused", route=route,
