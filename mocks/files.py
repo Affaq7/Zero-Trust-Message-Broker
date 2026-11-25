@@ -41,6 +41,10 @@ def resolve(root: Path, resource: str) -> tuple[str, Path]:
         raise FileStoreError(f"resource must look like file:/<path>, got {resource!r}")
     if "\\" in path or "\x00" in path:
         raise FileStoreError("path must use forward slashes")
+    # A drive letter ("/C:/...") would jump to the real disk on Windows; reject it on
+    # every OS so the store behaves the same everywhere.
+    if any(len(part) >= 2 and part[1] == ":" and part[0].isalpha() for part in path.split("/")):
+        raise FileStoreError("path must not contain a drive letter")
     real = (root / path.lstrip("/")).resolve()
     base = root.resolve()
     if real != base and base not in real.parents:

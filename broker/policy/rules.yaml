@@ -13,6 +13,15 @@ schema_version: "0.2"
 # Agents allowed in delegation_chain after "user" (the chain ends with the sender).
 max_delegation_agents: 3
 
+# Downstream steps that skip only the "every agent in the chain may itself call
+# the action" check. Each is sent only while serving an upstream request that
+# was itself fully checked: mail.deliver (tool serving the planner's email) and
+# web.fetch_page (research serving the planner's research.lookup). The role,
+# receiver and depth checks still apply, and every agent in the chain must still
+# be registered. Only Permitted actions may be listed (never Conditional, so the
+# A7 relay of db.query_rows stays denied).
+chain_exempt: [mail.deliver, web.fetch_page]
+
 # Every Conditional action needs a rule.
 #   only_roles:  roles that may call it (intersected with the catalog's allowed_roles)
 #   needs_human: true = ALLOW only after a human approves (HITL queue, Afaq's F3)

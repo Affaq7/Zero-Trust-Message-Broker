@@ -12,10 +12,18 @@ REPLAY_WINDOW_SECONDS = 60
 
 
 class ReplayCache:
-    """Remembers jti values for ``window`` seconds."""
+    """Remembers jti values for ``window`` seconds.
 
-    def __init__(self, window: int = REPLAY_WINDOW_SECONDS) -> None:
+    With ``max_entries`` set, the cache never holds more than that many values:
+    when it is full, the oldest one is dropped to make room (bounded memory
+    under a flood of unique values).
+    """
+
+    def __init__(self, window: int = REPLAY_WINDOW_SECONDS, max_entries: int | None = None) -> None:
+        if max_entries is not None and max_entries < 1:
+            raise ValueError("max_entries must be at least 1")
         self._window = window
+        self.max_entries = max_entries
         self._expiry: dict[str, int] = {}
         self._order: deque[tuple[int, str]] = deque()   # (expiry, jti), oldest first
         self._lock = threading.Lock()
@@ -30,6 +38,9 @@ class ReplayCache:
             self._purge(now)
             if jti in self._expiry:
                 return True
+            if self.max_entries is not None:
+                while len(self._expiry) >= self.max_entries:
+                    self._drop_oldest()
             expiry = now + self._window
             self._expiry[jti] = expiry
             self._order.append((expiry, jti))
@@ -37,9 +48,12 @@ class ReplayCache:
 
     def _purge(self, now: int) -> None:
         while self._order and self._order[0][0] <= now:
-            expiry, jti = self._order.popleft()
-            if self._expiry.get(jti) == expiry:
-                del self._expiry[jti]
+            self._drop_oldest()
+
+    def _drop_oldest(self) -> None:
+        expiry, jti = self._order.popleft()
+        if self._expiry.get(jti) == expiry:
+            del self._expiry[jti]
 
     def __len__(self) -> int:
         return len(self._expiry)
