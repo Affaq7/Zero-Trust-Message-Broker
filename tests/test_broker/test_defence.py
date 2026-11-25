@@ -1,8 +1,8 @@
 """Task A3: quarantine (broker/defence/quarantine.py) and revocation (revocation.py).
 
 Done-when: A9 (5 denials in 60 s, then QUARANTINE / AGENT_QUARANTINED, release
-restores access) and A10 (revoke, then AGENT_REVOKED; restore without a new
-token, then STALE_EPOCH, per docs/identity-spec.md).
+restores access) and A10 (revoke, then STALE_EPOCH for the old token; a new
+token while revoked, AGENT_REVOKED; per docs/identity-spec.md, epoch first).
 """
 
 import copy
@@ -187,15 +187,15 @@ def registry_with(*agents):
 
 
 def identity_code(reg, agent, token_epoch):
-    """Stand-in for the registry part of Kissa's verify_identity (checks 21 to 23
-    in docs/identity-spec.md) until broker/identity/verify.py is on main."""
+    """The registry part of Kissa's verify_identity (checks 21 to 23 in
+    docs/identity-spec.md), in her order: epoch first, then status."""
     r = reg.get(agent)
+    if token_epoch != r.epoch:
+        return "STALE_EPOCH"
     if r.status == "revoked":
         return "AGENT_REVOKED"
     if r.status == "suspended":
         return "AGENT_SUSPENDED"
-    if token_epoch != r.epoch:
-        return "STALE_EPOCH"
     return None
 
 
@@ -213,7 +213,12 @@ def test_a10_revoke_then_first_message_is_refused(reg):
     revocation.revoke("research")
     assert reg.get("research").status == "revoked"
     assert reg.get("research").epoch == token_epoch + 1
-    assert identity_code(reg, "research", token_epoch) == "AGENT_REVOKED"
+    assert identity_code(reg, "research", token_epoch) == "STALE_EPOCH"
+
+
+def test_a10_new_token_while_revoked_is_agent_revoked(reg):
+    revocation.revoke("research")
+    assert identity_code(reg, "research", reg.get("research").epoch) == "AGENT_REVOKED"
 
 
 def test_a10_restore_without_new_token_is_stale_epoch(reg):
