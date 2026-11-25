@@ -42,7 +42,7 @@ def write(tmp_path, data):
 
 def test_approved_starting_values():
     assert S["weights"] == {"identity": 0.20, "behaviour": 0.50, "context": 0.30}
-    assert (S["window"], S["lambda"], S["eta"], S["hysteresis"]) == (20, 0.5, 0.05, 0.05)
+    assert (S["window"], S["lambda"], S["eta"], S["hysteresis"]) == (20, 0.5, 0.1, 0.05)  # eta from A-R1
     assert S["severity"] == {"DENY": 1.0, INDIVIDUAL_DATA_REQUEST: 1.0,
                              INJECTION_CUE: 0.5, REPLY_SANITIZED: 0.5}
     assert S["bands"] == {"active": 0.80, "suspicious": 0.60, "restricted": 0.40}
@@ -96,7 +96,7 @@ def test_clean_message_recovers_ca():
     e = TrustEngine()
     e.update("a", "DENY", LOW, False)
     st = e.update("a", "ALLOW", LOW, False)
-    Ca = math.exp(-0.5) + 0.05 * (1 - math.exp(-0.5))
+    Ca = math.exp(-0.5) + S["eta"] * (1 - math.exp(-0.5))
     assert st.T == pytest.approx(expected_T(19 / 20, Ca))
 
 
