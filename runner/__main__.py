@@ -110,17 +110,20 @@ def main(argv=None) -> int:
         versions = None
     if mode == "broker":
         # Scenarios that drive a local attacker (the scripted sender, or a compromised responder
-        # run under a victim's name) assume direct agent-to-agent calls; routing them through a
-        # broker needs the broker's address, which is undecided.
+        # run under a victim's name) still send straight to the agents. Routing them through the
+        # broker is the next phase (F2-B); until then they are refused here, never run directly.
         def _local_attacker(s):
             return s.scripted is not None or any(a.impl == "malicious" for a in s.agents)
         refused = sorted(i for i, s in scenarios.items() if _local_attacker(s))
         if refused and args.scenario:
-            return _fail(f"scripted and compromised-responder scenarios are not supported in broker mode yet: "
-                         f"the broker address is undecided (refused: {', '.join(refused)}); nothing was run or scored")
+            return _fail(f"--mode broker does not run scripted or compromised-responder scenarios yet "
+                         f"(refused: {', '.join(refused)}). Their attacker still sends straight to the agents; "
+                         f"routing it through the broker comes in the next phase (F2-B). Nothing was run or "
+                         f"scored; run them with --mode direct for the baseline.")
         if refused:
-            print(f"note: scripted and compromised-responder scenarios are not supported in broker mode yet: "
-                  f"the broker address is undecided; skipping {', '.join(refused)} (not run, not scored)",
+            print(f"note: --mode broker skips scripted and compromised-responder scenarios for now "
+                  f"({', '.join(refused)}; not run, not scored): their attacker still sends straight to "
+                  f"the agents, and routing it through the broker comes in the next phase (F2-B)",
                   file=sys.stderr)
             scenarios = {i: s for i, s in scenarios.items() if i not in refused}
     if not scenarios:
@@ -159,8 +162,9 @@ def main(argv=None) -> int:
         writer.start(list(scenarios.values()), reps=reps_override or 0, llm_backend=llm_backend, llm=llm,
                      max_minutes=args.max_minutes, planner_versions=versions, mode=mode)
         print(f"run {run_id} -> {writer.dir}")
-        if mode != "direct":
-            print(f"note: MODE={mode}; the broker is not implemented yet, so tasks that send a message will fail")
+        if mode == "broker":
+            print("note: MODE=broker; every repetition starts its own broker with fresh credentials "
+                  "(see run_meta.json \"broker\" for the real and stubbed modules)")
         if len(set(versions.values())) > 1:
             print(f"note: this run mixes planner prompt versions {dict(sorted(versions.items()))}; "
                   f"it is not a valid final baseline (use --planner-prompt)")
@@ -208,6 +212,8 @@ def main(argv=None) -> int:
                                                   debug_prompts=args.debug_prompts,
                                                   planner_prompt=versions.get(s.id), mode=mode)
                     warmup.note_repetition(outcomes)
+                    if outcomes and outcomes[0].broker_info:
+                        writer.note_broker(outcomes[0].broker_info)
                     for o in outcomes:
                         ev = evaluate(s, o)
                         writer.add(s, o, ev)

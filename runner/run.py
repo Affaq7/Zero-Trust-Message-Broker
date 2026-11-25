@@ -52,6 +52,27 @@ class TaskOutcome:
     ground_truth: list[dict] = field(default_factory=list)
     llm_calls: list[dict] = field(default_factory=list)
     script_log: list[dict] = field(default_factory=list)
+    # MODE=broker only: the broker's decision for every message of this trace, oldest first
+    # (from GET /api/events), and what the broker ran with (from GET /health).
+    broker_events: list[dict] = field(default_factory=list)
+    broker_info: dict | None = None
+
+
+BROKER_EVENT_FIELDS = ("msg_id", "sender", "receiver", "action", "step", "decision", "reason_code",
+                       "events", "forwarded")
+
+
+def collect_broker(broker_url: str, trace_ids: list[str]) -> tuple[dict, dict[str, list[dict]]]:
+    """What the broker ran with, and its decisions per trace (decision + reason code, no payloads)."""
+    health = httpx.get(f"{broker_url}/health", timeout=30).json()
+    events = httpx.get(f"{broker_url}/api/events", params={"limit": 1000}, timeout=30).json()["events"]
+    info = {"mode": "broker", "broker_real": health.get("real", []), "stubbed": health.get("stubbed", []),
+            "modules": health.get("modules", {}), "ignored": health.get("ignored", {})}
+    per_trace: dict[str, list[dict]] = {t: [] for t in trace_ids}
+    for e in reversed(events):                                   # /api/events is newest first
+        if e.get("kind") == "decision" and e.get("trace_id") in per_trace:
+            per_trace[e["trace_id"]].append({k: e.get(k) for k in BROKER_EVENT_FIELDS})
+    return info, per_trace
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -132,6 +153,15 @@ def run_repetition(scenario: Scenario, rep: int, run_dir: Path, *, concurrency: 
         for o in outcomes:
             gt = httpx.get(f"{mocks_url}/ground-truth", params={"trace_id": o.trace_id}, timeout=30)
             o.ground_truth = gt.json()["records"]
+
+        if mode == "broker":
+            info, per_trace = collect_broker(tb.url("broker"), [o.trace_id for o in outcomes])
+            for o in outcomes:
+                o.broker_info, o.broker_events = info, per_trace[o.trace_id]
+            # The broker's view of every agent at the end of the repetition (T, trust state,
+            # quarantined, epoch), and its pending approvals; no payloads.
+            state = httpx.get(f"{tb.url('broker')}/api/state", timeout=30).json()
+            (rep_dir / "broker_state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
 
     for o in outcomes:
         o.envelopes = collect_envelopes(log_dir, o.trace_id)

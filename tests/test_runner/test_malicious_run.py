@@ -136,5 +136,5 @@ def test_a2_through_the_cli_writes_a_well_formed_row(tmp_path):
 def test_broker_mode_refuses_a_compromised_scenario(tmp_path, capsys):
     from runner.__main__ import main
     assert main(["--results-dir", str(tmp_path), "--mode", "broker", "--scenario", "A4"]) == 2
-    assert "not supported in broker mode yet: the broker address is undecided" in capsys.readouterr().err
+    assert "--mode broker does not run scripted or compromised-responder scenarios yet" in capsys.readouterr().err
     assert list(tmp_path.iterdir()) == []                           # not run, not scored

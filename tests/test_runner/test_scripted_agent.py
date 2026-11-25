@@ -339,7 +339,7 @@ def test_broker_mode_refuses_an_explicit_scripted_scenario(tmp_path, capsys):
     code = main(["--results-dir", str(tmp_path), "--mode", "broker", "--scenario", "A1"])
     err = capsys.readouterr().err
     assert code == 2
-    assert "not supported in broker mode yet: the broker address is undecided" in err
+    assert "--mode broker does not run scripted or compromised-responder scenarios yet" in err
     assert list(tmp_path.iterdir()) == []                                 # not run, no results folder, not scored
 
 
@@ -352,7 +352,7 @@ def test_broker_mode_skips_scripted_scenarios_when_none_were_named(tmp_path, cap
                             "not_executed_reason": "needs something that is not built"})
     code = main(["--results-dir", str(tmp_path / "res"), "--scenarios-dir", str(scen), "--mode", "broker"])
     out = capsys.readouterr()
-    assert code == 0 and "not supported in broker mode yet" in out.err
+    assert code == 0 and "--mode broker skips scripted and compromised-responder scenarios" in out.err
     [run] = list((tmp_path / "res").iterdir())
     with open(run / "results.csv", encoding="utf-8", newline="") as f:
         assert [(r["scenario_id"], r["status"]) for r in csv.DictReader(f)] == [("X5", "not_executed")]
