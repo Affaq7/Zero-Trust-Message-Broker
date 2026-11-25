@@ -213,8 +213,8 @@ its code and `ok=False`. Success returns `ok=True` with `agent`, `role`,
 | 11 | `sub == env.sender` (`contracts.tokens.sub_matches_sender`) | `SUB_MISMATCH` |
 | 12 | `role ==` registry role | `ROLE_MISMATCH` |
 | 13 | `X-Agent-Proof` present and not the stub value | `PROOF_MISSING` |
-| 14 | proof decodes, `typ` is `ztb-proof+jwt`, `alg` is `EdDSA`, all claims present | `PROOF_MALFORMED` |
-| 15 | proof signature verifies with the registry key named by `cnf.jkt` | `PROOF_KEY_MISMATCH` |
+| 14 | proof decodes, `typ` is `ztb-proof+jwt`, `alg` is `EdDSA` | `PROOF_MALFORMED` |
+| 15 | proof signature verifies with the registry key named by `cnf.jkt`; then exactly the six claims, `iat` a whole number, the rest non-empty strings (else `PROOF_MALFORMED`) | `PROOF_KEY_MISMATCH` |
 | 16 | proof `iat` within 30 s (5 s future leeway) | `PROOF_STALE` |
 | 17 | proof `aud` is `ztbroker` | `WRONG_AUDIENCE` |
 | 18 | `ath` matches the token | `PROOF_TOKEN_MISMATCH` |
@@ -330,3 +330,30 @@ be removed with team agreement.
    instead of `make_proof_stub(request)`; the key is `FileCredentials.private_key`.
 4. Scripted attacks: A6 uses a token from `--expired`; A14 uses
    `research-stolen.json`'s token with a freshly generated key for the proof.
+
+## 11. Changes from the proof of concept (report Appendix A, for K-R3)
+
+`broker/identity/verify.py` grew from the 138-line proof of concept and keeps
+its structure (token, then proof, then state) and its 9 cases, which are now
+pytest cases in `tests/test_broker/test_identity.py`. Decided on 2026-11-25
+(this spec wins over the proof of concept):
+
+| Point | Proof of concept | Broker (this spec) | Why |
+|---|---|---|---|
+| Token signer | broker issuer key, `typ` `at+jwt`, `kid` `broker-1` | the agent instance's own key, checked against the registry | registry is the trust anchor; 7 credential files, no issuer key to protect |
+| Proof `aud` | the receiver | `ztbroker` | the broker is the only party that checks proofs |
+| `msg_hash` | payload bytes only | the whole envelope without broker fields | receiver, action, resource and chain are signed too |
+| Leeway | 30 s | 5 s on token times; proof accepted for 30 s | tighter replay window |
+| Claims | `scope`, token deny list | neither (`extra="forbid"`); revocation through the epoch | one revocation mechanism |
+| Epoch | starts at 1 | starts at 0 | matches `revoke()` tests |
+| Replay set | kept forever | 60 s window | bounded memory |
+| Result | exception text | one reason code (section 8) | audit log and teammates use the codes |
+| Signature check | PyJWT `decode` | each JWT parsed once, Ed25519 checked with `cryptography`, strict base64url | PyJWT re-parsed every token on each call |
+
+Case 5 of Table 8 ("wrong receiver, audience does not match") now fails with
+`MSG_HASH_MISMATCH`, because the receiver is inside the signed envelope hash.
+
+Measured on the development machine (`scratch` benchmark, 5 runs of 2000
+checks, token and proof made in advance, in process): median 448 microseconds
+per check, worst run 461. The proof of concept measured 299 microseconds for a
+smaller check set. A test fails if the average goes over 1 ms.
