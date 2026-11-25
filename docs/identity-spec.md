@@ -132,7 +132,8 @@ answered. The reply is checked by step 9 (content), not by identity.
 | Proof validity | accepted only if `now - 30 <= iat <= now + 5` | `verify.py` |
 | Proof `jti` replay window | each accepted `jti` kept 60 s (longer than 30 s + leeway, so a proof is remembered for its whole life) | `broker/identity/replay.py` |
 | Envelope `timestamp` | older than 60 s is `STALE_MESSAGE`; more than 5 s in the future is also `STALE_MESSAGE` | `broker/intercept/validate.py` |
-| Envelope `msg_id` dedupe window | each `msg_id` kept 120 s (longer than the 60 s stale window) | `validate.py` |
+| Envelope `msg_id` dedupe window | each `msg_id` kept 120 s (longer than the 60 s stale window), at most 100,000 at once; when full the oldest is dropped (a replay of a dropped id still carries the same proof `jti`, so step 2 refuses it with `PROOF_REPLAY`) | `validate.py` |
+| Message size | HTTP body at most 128 KB, checked on the raw bytes before parsing; the whole parsed message also at most 128 KB; the payload at most 64 KB | `validate.py` |
 
 All times are whole seconds from `time.time()`. State is in memory only; a
 broker restart clears both caches (Redis is FYP-II).
@@ -186,9 +187,20 @@ roles claimed in the message:
 3. Every agent in the chain after `user` is registered, and its registry role is
    in the action's `allowed_roles`, else `DELEGATION_EXCEEDS_DELEGATOR`. A
    delegate can never do more than any agent that delegated to it.
+4. Exception (`chain_exempt` in `broker/policy/rules.yaml`, added 26 Nov after
+   Afaq's broker-mode run): `mail.deliver` and `web.fetch_page` skip only the
+   role part of rule 3. Without it, N3 (tool to mailer, chain `user, planner,
+   tool`) and N4 (research to tool, chain `user, planner, research`) were denied,
+   because the planner may not call those actions itself. Both are downstream
+   steps, sent only while serving an upstream request that was fully checked.
+   Rules 1 and 2, the role and receiver gates, and "every agent registered"
+   still apply. Only Permitted actions may be listed.
 
 Example A7: chain `user, research, planner`, action `db.query_rows`. The planner
-may call it, research may not, so `DELEGATION_EXCEEDS_DELEGATOR`.
+may call it, research may not, so `DELEGATION_EXCEEDS_DELEGATOR`. A relay of an
+email the same way (`planner` to `tool`, `tool.send_email_internal`, research in
+the chain) is denied at that hop for the same reason, so the tool never sends the
+`mail.deliver` that would follow.
 
 `justification` text is never read by policy (A8 gets the same decision as A1).
 
@@ -238,7 +250,7 @@ change.**
 | Code | Meaning |
 |---|---|
 | `MALFORMED_JSON` | body is not a JSON object |
-| `PAYLOAD_TOO_LARGE` | payload over 64 KB (65,536 bytes of compact JSON) |
+| `PAYLOAD_TOO_LARGE` | payload over 64 KB (65,536 bytes of compact JSON), or the whole message over 128 KB (raw body bytes before parsing, or the parsed message) |
 | `BAD_SCHEMA_VERSION` | `schema_version` is not `"0.2"` |
 | `BAD_ENVELOPE` | fails the `Envelope` structure (missing, wrong type or extra field) |
 | `RULE_VIOLATION` | `rule_violations()` is not empty |

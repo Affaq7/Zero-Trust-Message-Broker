@@ -54,6 +54,7 @@ class PolicyRules(BaseModel):
     schema_version: Literal[SCHEMA_VERSION]
     max_delegation_agents: int = Field(ge=1)
     conditional: dict[str, ConditionalRule]
+    chain_exempt: tuple[str, ...] = ()
 
 
 def load_rules(path: Path = RULES_PATH, catalog: ActionCatalog | None = None) -> PolicyRules:
@@ -70,6 +71,12 @@ def load_rules(path: Path = RULES_PATH, catalog: ActionCatalog | None = None) ->
         unknown = set(rule.only_roles) - set(catalog.roles)
         if unknown:
             raise ValueError(f"rules.yaml: {action!r} names unknown role(s) {sorted(unknown)}")
+    for action in rules.chain_exempt:
+        spec = catalog.get(action)
+        if spec is None:
+            raise ValueError(f"rules.yaml chain_exempt: {action!r} is not in the catalog")
+        if spec.action_class != "Permitted":
+            raise ValueError(f"rules.yaml chain_exempt: {action!r} is {spec.action_class}; only Permitted")
     missing = {a.name for a in catalog.actions if a.action_class == "Conditional"} - set(rules.conditional)
     if missing:
         raise ValueError(f"rules.yaml: no rule for Conditional action(s) {sorted(missing)}")
@@ -128,13 +135,17 @@ class PolicyEngine:
         return roles & set(rule.only_roles) if rule is not None else roles
 
     def _delegation_reason(self, env: Envelope, permitted: set[str]) -> str | None:
-        """Every agent in the chain must be registered and may itself call the action."""
+        """Every agent in the chain must be registered and may itself call the action.
+
+        A ``chain_exempt`` downstream step skips only the "may itself call" part.
+        """
         agents = env.delegation_chain[1:]            # chain[0] is "user" (rule_violations)
         if len(agents) > self.rules.max_delegation_agents:
             return "DELEGATION_TOO_DEEP"
+        exempt = env.action in self.rules.chain_exempt
         for agent in agents:
             record = self.registry.get(agent) if agent != USER else None
-            if record is None or record.role not in permitted:
+            if record is None or (not exempt and record.role not in permitted):
                 return "DELEGATION_EXCEEDS_DELEGATOR"
         return None
 
