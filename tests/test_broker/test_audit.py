@@ -52,7 +52,9 @@ def lines(path):
 
 
 def put(path, rows):
-    path.write_text("".join(r + "\n" for r in rows), encoding="utf-8")
+    # Bytes, not write_text: on Windows write_text turns "\n" into "\r\n",
+    # and the broker never writes "\r", so verify_chain would reject line 1.
+    path.write_bytes("".join(r + "\n" for r in rows).encode("utf-8"))
 
 
 # --- append and the chain -------------------------------------------------------
@@ -227,6 +229,13 @@ def test_missing_or_empty_file_is_ok(path, key):
     assert verify_chain(path, key.public_key()).ok
     path.write_text("", encoding="utf-8")
     assert verify_chain(path, key.public_key()).lines == 0
+
+
+def test_put_writes_lf_only_on_every_os(path, key):
+    write_n(path, key, 3)
+    put(path, lines(path))
+    assert b"\r" not in path.read_bytes()
+    assert verify_chain(path, key.public_key()).ok
 
 
 # --- the command ------------------------------------------------------------------------
