@@ -3,9 +3,11 @@
 revoke(agent) calls Kissa's AgentRegistry.revoke(): status "revoked" and epoch
 + 1, so every token issued before is stale. restore(agent) calls
 AgentRegistry.restore(): status "active" again, epoch kept. Per
-docs/identity-spec.md (section 7 and the A10 row), the identity step then
-answers AGENT_REVOKED while the agent is revoked, and STALE_EPOCH after a
-restore until a new token is issued with the new epoch.
+docs/identity-spec.md (section 7 and the A10 row, Kissa's check order with
+the epoch first), the identity step then answers STALE_EPOCH for every token
+issued before the revoke, also after a restore, until a new token is issued
+with the new epoch. A new token for an agent that is still revoked gets
+AGENT_REVOKED.
 
 The broker app calls set_registry() once at startup with its registry; tests
 plug in their own. Interface fixed on 25 Nov (context file, section 7).
