@@ -15,7 +15,7 @@ from wrapper.app import create_app
 from wrapper.config import ConfigError, Settings, parse_agent_urls
 from wrapper.send import (
     BadResponseError,
-    BrokerModeNotImplementedError,
+    BrokerNotConfiguredError,
     ReceiverUnreachableError,
     UnknownReceiverError,
     send_message,
@@ -199,8 +199,8 @@ def test_wrapper_rejection_is_a_bad_response(tmp_path):
     assert info.value.status_code == 400
 
 
-def test_broker_mode_not_implemented():
-    with pytest.raises(BrokerModeNotImplementedError, match="not implemented"):
+def test_broker_mode_without_broker_url_sends_nothing():
+    with pytest.raises(BrokerNotConfiguredError, match="BROKER_URL"):
         send(mock_client(_never_called), environ=planner_env(MODE="broker"))
 
 

@@ -47,7 +47,15 @@ def _temp_log_dir(tmp_path):
     _log_dir = tmp_path / "logs"
 
 
+FORWARD = "forward-placeholder-secret"     # the per-run broker forwarding secret (X-Broker-Token), a test value
+
+
 def client(mode="direct", agent="dummy"):
+    if mode == "broker":                               # stands in for the broker, which sends the token
+        c = TestClient(create_app(Settings(mode=mode, agent_name=agent, log_dir=_log_dir,
+                                           broker_forward_token=FORWARD)))
+        c.headers["X-Broker-Token"] = FORWARD
+        return c
     return TestClient(create_app(Settings(mode=mode, agent_name=agent, log_dir=_log_dir)))
 
 
@@ -147,9 +155,9 @@ def test_agent_failure_becomes_error_response(monkeypatch):
 
 # --- broker mode ---------------------------------------------------------------
 
-def test_broker_mode_returns_501():
+def test_broker_mode_handles_a_forwarded_request_like_direct_mode():
     r = post(client(mode="broker"), request_dict())
-    assert r.status_code == 501
+    assert r.status_code == 200 and r.json()["msg_type"] == "response"
     assert client(mode="broker").get("/health").json()["mode"] == "broker"
 
 

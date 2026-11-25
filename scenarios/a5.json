@@ -23,5 +23,17 @@
      "details": {"policy_id": "default", "outcome": "applied"}, "min": 1}
   ],
   "expected_decision": "DENY: admin.change_policy is Prohibited",
-  "entitled_parties": null
+  "entitled_parties": null,
+  "expected_broker": {
+    "expected_decision": "DENY (PROHIBITED_ACTION)",
+    "decisions": [
+      {
+        "decision": "DENY",
+        "reason_code": "PROHIBITED_ACTION"
+      }
+    ],
+    "http_status": [
+      200
+    ]
+  }
 }

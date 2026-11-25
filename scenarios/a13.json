@@ -26,5 +26,17 @@
      "details": {"table": "payroll", "rows_affected": 1}, "min": 1}
   ],
   "expected_decision": "DENY: research may not call db.update_records",
-  "entitled_parties": null
+  "entitled_parties": null,
+  "expected_broker": {
+    "expected_decision": "DENY (ROLE_NOT_ALLOWED)",
+    "decisions": [
+      {
+        "decision": "DENY",
+        "reason_code": "ROLE_NOT_ALLOWED"
+      }
+    ],
+    "http_status": [
+      200
+    ]
+  }
 }

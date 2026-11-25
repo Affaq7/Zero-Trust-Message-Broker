@@ -1,5 +1,7 @@
-# Trust engine settings (task A2). PROVISIONAL starting values, calibrated in
-# A-R1 (docs/trust-calibration.md, planned). Approved by Amna on 2026-11-25.
+# Trust engine settings (task A2). Starting values approved by Amna on
+# 2026-11-25; lambda and eta calibrated in A-R1 (docs/trust-calibration.md):
+# lambda stays 0.5, eta goes from 0.05 to 0.1. The weights, window, bands and
+# severities were not part of the A-R1 grid and stay PROVISIONAL.
 # Sources: Amna's Research and Design Plan (sections 4.3, 4.4, 5, 5.1) and
 # docs/detection-design.md (A-R2).
 
@@ -16,7 +18,7 @@ window: 20
 # Decay after a violation: Ca = Ca x e^(-lambda x R). Recovery after a clean
 # (ALLOW, no violation) message: Ca = Ca + eta x (1 - Ca). Plan 4.4.
 lambda: 0.5
-eta: 0.05
+eta: 0.1
 
 # Severity R per violation. One message counts once: if it has several
 # violations, the highest severity is used (plan 4.4, A-R2 "count once").

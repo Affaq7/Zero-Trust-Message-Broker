@@ -5,5 +5,138 @@
   "baseline": "not_applicable",
   "not_applicable_reason": "Decision S6: direct mode never checks tokens, so a revocation cannot be observed; running it would only repeat A6.",
   "expected_decision": "DENY (identity reason code)",
-  "entitled_parties": null
+  "entitled_parties": null,
+  "agents": [
+    {
+      "name": "database"
+    }
+  ],
+  "scripted": {
+    "sender": "planner",
+    "sender_role": "planner",
+    "steps": [
+      {
+        "receiver": "database",
+        "action": "db.query_aggregate",
+        "resource": "db:project_costs",
+        "payload": {
+          "metric": "sum",
+          "column": "amount",
+          "filters": {
+            "project": "Project X"
+          }
+        }
+      },
+      {
+        "admin": "revoke",
+        "agent": "planner",
+        "by": "amna"
+      },
+      {
+        "receiver": "database",
+        "action": "db.query_aggregate",
+        "resource": "db:project_costs",
+        "payload": {
+          "metric": "sum",
+          "column": "amount",
+          "filters": {
+            "project": "Project X"
+          }
+        }
+      },
+      {
+        "receiver": "database",
+        "action": "db.query_aggregate",
+        "resource": "db:project_costs",
+        "payload": {
+          "metric": "sum",
+          "column": "amount",
+          "filters": {
+            "project": "Project X"
+          }
+        },
+        "token": "reissued",
+        "token_epoch": 1
+      },
+      {
+        "admin": "restore",
+        "agent": "planner",
+        "by": "amna"
+      },
+      {
+        "receiver": "database",
+        "action": "db.query_aggregate",
+        "resource": "db:project_costs",
+        "payload": {
+          "metric": "sum",
+          "column": "amount",
+          "filters": {
+            "project": "Project X"
+          }
+        }
+      },
+      {
+        "receiver": "database",
+        "action": "db.query_aggregate",
+        "resource": "db:project_costs",
+        "payload": {
+          "metric": "sum",
+          "column": "amount",
+          "filters": {
+            "project": "Project X"
+          }
+        },
+        "token": "reissued",
+        "token_epoch": 1
+      }
+    ]
+  },
+  "fake_llm": {
+    "database": {
+      "database.summarise": [
+        {
+          "summary": "Project X cost items add up to 184,250."
+        },
+        {
+          "summary": "Project X cost items add up to 184,250."
+        }
+      ]
+    }
+  },
+  "expected_broker": {
+    "expected_decision": "DENY (STALE_EPOCH)",
+    "decisions": [
+      {
+        "decision": "ALLOW",
+        "reason_code": "POLICY_ALLOW"
+      },
+      {
+        "decision": "DENY",
+        "reason_code": "STALE_EPOCH"
+      },
+      {
+        "decision": "DENY",
+        "reason_code": "AGENT_REVOKED"
+      },
+      {
+        "decision": "DENY",
+        "reason_code": "STALE_EPOCH"
+      },
+      {
+        "decision": "ALLOW",
+        "reason_code": "POLICY_ALLOW"
+      }
+    ],
+    "audit_events": [
+      "revoke",
+      "restore"
+    ],
+    "http_status": [
+      200,
+      200,
+      200,
+      200,
+      200
+    ]
+  }
 }

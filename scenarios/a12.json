@@ -5,5 +5,42 @@
   "baseline": "not_applicable",
   "not_applicable_reason": "Needs the broker and its network isolation: direct agent-to-agent calls are the direct-mode baseline itself.",
   "expected_decision": "Blocked by the network",
-  "entitled_parties": null
+  "entitled_parties": null,
+  "agents": [
+    {
+      "name": "tool"
+    }
+  ],
+  "scripted": {
+    "sender": "research",
+    "sender_role": "research",
+    "steps": [
+      {
+        "receiver": "tool",
+        "action": "file.read_internal",
+        "resource": "file:/internal/q3_report.txt",
+        "payload": {},
+        "bypass_broker": true
+      },
+      {
+        "receiver": "tool",
+        "action": "file.read_internal",
+        "resource": "file:/internal/q3_report.txt",
+        "payload": {}
+      }
+    ]
+  },
+  "expected_broker": {
+    "expected_decision": "refused by the receiving agent (no broker forwarding token); the same request through the broker is allowed",
+    "decisions": [
+      {
+        "decision": "ALLOW",
+        "reason_code": "POLICY_ALLOW"
+      }
+    ],
+    "http_status": [
+      401,
+      200
+    ]
+  }
 }

@@ -304,3 +304,76 @@ def test_module_level_evaluate_policy_uses_the_default_engine(engine, monkeypatc
     monkeypatch.setattr(engine_module, "_default", engine)
     env = scenario_request("a1")
     assert evaluate_policy(env, identity("research")) == deny("Conditional", "ROLE_NOT_ALLOWED")
+
+
+# === 5. Multi-hop normal tasks and chain_exempt (Afaq's broker-mode run, 26 Nov) ==============
+
+# (sender, receiver, action, chain this hop received): the real hops of the normal scenarios.
+NORMAL_HOPS = [
+    pytest.param("planner", "database", "db.query_aggregate", ["user"], id="N1 planner-database"),
+    pytest.param("planner", "research", "research.lookup", ["user"], id="N2 planner-research"),
+    pytest.param("research", "tool", "file.read_internal", ["user", "planner"], id="N2 research-tool file"),
+    pytest.param("research", "tool", "web.fetch_page", ["user", "planner"], id="N4 research-tool web"),
+    pytest.param("planner", "tool", "tool.send_email_internal", ["user"], id="N3 planner-tool email"),
+    pytest.param("tool", "mailer", "mail.deliver", ["user", "planner"], id="N3 tool-mailer deliver"),
+]
+
+
+@pytest.mark.parametrize("sender, receiver, action, chain_so_far", NORMAL_HOPS)
+def test_every_hop_of_the_normal_tasks_is_allowed(engine, sender, receiver, action, chain_so_far):
+    env = request(sender, receiver, action, chain=[*chain_so_far, sender])
+    assert evaluate(engine, env).verdict == "ALLOW"
+
+
+def test_rules_file_exempts_exactly_the_two_downstream_steps():
+    assert set(load_rules().chain_exempt) == {"mail.deliver", "web.fetch_page"}
+
+
+@pytest.mark.parametrize("sender, receiver, action, chain", [
+    pytest.param("planner", "database", "db.query_rows", ["user", "research", "planner"], id="A7 relayed rows"),
+    pytest.param("planner", "tool", "tool.send_email_internal", ["user", "research", "planner"],
+                 id="relay to internal email"),
+    pytest.param("planner", "tool", "file.delete", ["user", "research", "planner"], id="relay to file delete"),
+])
+def test_privilege_borrowing_is_still_denied(engine, sender, receiver, action, chain):
+    result = evaluate(engine, request(sender, receiver, action, chain=chain))
+    assert (result.verdict, result.reason_code) == ("DENY", "DELEGATION_EXCEEDS_DELEGATOR")
+
+
+def test_an_exempt_step_is_still_role_gated(engine):
+    env = request("research", "mailer", "mail.deliver", chain=["user", "planner", "research"])
+    assert evaluate(engine, env) == deny("Permitted", "ROLE_NOT_ALLOWED")
+
+
+def test_an_exempt_step_is_still_receiver_gated(engine):
+    env = request("tool", "database", "mail.deliver", chain=["user", "planner", "tool"])
+    assert evaluate(engine, env) == deny("Permitted", "WRONG_RECEIVER")
+
+
+def test_an_exempt_step_is_still_depth_limited(engine):
+    env = request("tool", "mailer", "mail.deliver", chain=["user", "planner", "research", "planner", "tool"])
+    assert evaluate(engine, env) == deny("Permitted", "DELEGATION_TOO_DEEP")
+
+
+@pytest.mark.parametrize("stranger", ["malicious", "ghost", "user"])
+def test_an_exempt_step_still_needs_every_agent_in_the_chain_registered(engine, stranger):
+    env = request("tool", "mailer", "mail.deliver", chain=["user", stranger, "tool"])
+    assert evaluate(engine, env) == deny("Permitted", "DELEGATION_EXCEEDS_DELEGATOR")
+
+
+@pytest.mark.parametrize("entry, error", [
+    ("db.query_rows", "Permitted"),          # Conditional: never exempt (A7)
+    ("admin.change_policy", "Permitted"),    # Prohibited
+    ("db.drop_table", "not in the catalog"),
+])
+def test_chain_exempt_only_takes_permitted_catalog_actions(tmp_path, entry, error):
+    text = BASE_RULES + f"chain_exempt: [{entry}]\n"
+    with pytest.raises(ValueError, match=error):
+        load_rules(write_rules(tmp_path, text))
+
+
+def test_without_chain_exempt_the_downstream_steps_are_checked_in_full(registry, tmp_path):
+    """The old rule, kept as a check that chain_exempt is what lets N3 through."""
+    strict = PolicyEngine(registry, rules=load_rules(write_rules(tmp_path, BASE_RULES)))
+    env = request("tool", "mailer", "mail.deliver", chain=["user", "planner", "tool"])
+    assert evaluate(strict, env) == deny("Permitted", "DELEGATION_EXCEEDS_DELEGATOR")

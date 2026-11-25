@@ -129,6 +129,11 @@ def lookup_durations_ms(envelopes: list[dict]) -> list[int]:
             if e["direction"] == "out" and e["envelope"].get("parent_msg_id") in started]
 
 
+def broker_decision_cell(events: list[dict]) -> str:
+    """results.csv broker_decision: each message's decision and reason code, in order."""
+    return "; ".join(f"{e.get('decision')}:{e.get('reason_code')}" for e in events)
+
+
 def _row_from_csv(row: dict[str, str]) -> dict[str, Any]:
     """A results.csv row back in the types the writer uses (for resume and summaries)."""
     def num(v):
@@ -246,6 +251,13 @@ class ResultsWriter:
             for r in records:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
+    def note_broker(self, info: dict) -> None:
+        """Record once, in run_meta.json, what the broker ran with (mode, BROKER_REAL, stubs)."""
+        meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
+        if meta.get("broker") is None:
+            meta["broker"] = info
+            self.meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
     def add(self, scenario: Scenario, o: TaskOutcome, ev: Evaluation) -> None:
         ids = {"run_id": self.run_id, "scenario_id": scenario.id, "rep": o.rep,
                "concurrency": o.concurrency, "slot": o.slot, "trace_id": o.trace_id}
@@ -263,7 +275,18 @@ class ResultsWriter:
             "criteria_failed": "; ".join(f"{i}:{c['type']} ({c['detail']})"
                                          for i, c in enumerate(ev.criteria, 1) if not c["passed"]),
             "expected_decision": scenario.expected_decision, "error": o.error,
+            # MODE=broker only (empty in direct mode, as before): every message's decision:reason.
+            **({"broker_decision": broker_decision_cell(o.broker_events)} if o.broker_events else {}),
+            # MODE=broker with expected_broker: did the broker do what the scenario expects
+            # (decisions, audit log, HTTP statuses, quarantine state)? Empty when not scored.
+            **({"detected": o.broker_score["matched"]}
+               if o.broker_score is not None and o.broker_score.get("matched") is not None else {}),
         })
+        if o.broker_score is not None:
+            self._append_jsonl("broker_score.jsonl", [{**ids, **o.broker_score}])
+        if o.broker_events:
+            self._append_jsonl("broker_decisions.jsonl", [{**ids, "n": n, **e}
+                                                          for n, e in enumerate(o.broker_events, 1)])
         self._append_jsonl("criteria.jsonl", [{
             **ids, "status": o.status, "task_status": o.task_status, "answer": o.answer,
             "criteria": [{"n": i, **crit.model_dump(exclude_none=True), "passed": c["passed"],
@@ -287,18 +310,18 @@ class ResultsWriter:
                                             if str(c.get("purpose", "")).startswith("research.")),
                 "research_lookup_ms_max": max(lookups)}
 
-    def add_not_applicable(self, scenario: Scenario) -> None:
+    def add_not_applicable(self, scenario: Scenario, reason: str | None = None) -> None:
         self._append_csv({"run_id": self.run_id, "scenario_id": scenario.id,
                           "category": scenario.category, "baseline": scenario.baseline,
                           "status": "not_applicable",
-                          "not_applicable_reason": scenario.not_applicable_reason,
+                          "not_applicable_reason": reason or scenario.not_applicable_reason,
                           "expected_decision": scenario.expected_decision})
 
-    def add_not_executed(self, scenario: Scenario) -> None:
+    def add_not_executed(self, scenario: Scenario, reason: str | None = None) -> None:
         self._append_csv({"run_id": self.run_id, "scenario_id": scenario.id,
                           "category": scenario.category, "baseline": scenario.baseline,
                           "status": "not_executed",
-                          "not_executed_reason": scenario.not_executed_reason,
+                          "not_executed_reason": reason or scenario.not_executed_reason,
                           "expected_decision": scenario.expected_decision})
 
     # --- summary -------------------------------------------------------------------

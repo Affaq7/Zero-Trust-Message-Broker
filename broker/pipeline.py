@@ -95,23 +95,27 @@ class UnknownApprovalError(ValueError):
 
 # --- module registry, per function ----------------------------------------------------------
 
-# group name (as written in BROKER_REAL) -> (real module path, functions or classes it provides).
+# group name (as written in BROKER_REAL) -> ((real module path, functions or classes it provides), ...).
 # Paths of modules not on main yet are the documented ones: validate (Kissa K4), defence
 # (PR #8), audit (PR #9), signing (A5, stretch), content (F3, placeholder path).
-GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
-    "validate": ("broker.intercept.validate", ("validate_envelope",)),
-    "identity": ("broker.identity.verify", ("verify_identity",)),
-    "defence": ("broker.defence.quarantine", ("DefenceManager",)),
-    "policy": ("broker.policy.engine", ("evaluate_policy",)),
-    "risk": ("broker.trust.risk", ("risk_vector", "required_trust")),
-    "trust": ("broker.trust.trust", ("TrustEngine",)),
-    "burst": ("broker.trust.rules", ("BurstDetector",)),
-    "content": ("broker.content", ("check_request_content", "sanitize_reply")),
-    "audit": ("broker.audit.log", ("append", "configure")),
-    "signing": ("broker.transport.signing", ("sign_decision",)),
+GROUPS: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
+    "validate": (("broker.intercept.validate", ("validate_envelope",)),),
+    "identity": (("broker.identity.verify", ("verify_identity",)),),
+    "defence": (("broker.defence.quarantine", ("DefenceManager",)),
+                ("broker.defence.revocation", ("set_registry", "revoke", "restore"))),
+    "policy": (("broker.policy.engine", ("evaluate_policy",)),),
+    "risk": (("broker.trust.risk", ("risk_vector", "required_trust")),),
+    "trust": (("broker.trust.trust", ("TrustEngine",)),),
+    "burst": (("broker.trust.rules", ("BurstDetector",)),),
+    "content": (("broker.content", ("check_request_content", "sanitize_reply")),),
+    "audit": (("broker.audit.log", ("append", "configure")),),
+    "signing": (("broker.transport.signing", ("sign_decision",)),),
 }
-FUNCTIONS: tuple[str, ...] = tuple(f for _, fns in GROUPS.values() for f in fns)
-REVOCATION_MODULE = "broker.defence.revocation"     # PR #8: set_registry(), revoke(), restore()
+FUNCTIONS: tuple[str, ...] = tuple(f for parts in GROUPS.values() for _, fns in parts for f in fns)
+FORWARD_ENV_VAR = "BROKER_FORWARD_TOKEN"  # per-run secret sent to agents when forwarding
+FORWARD_HEADER = "X-Broker-Token"
+KEYS_DIR_ENV = "BROKER_KEYS_DIR"            # registry source for real identity/policy (default: keys/)
+SIGNING_KEY_ENV = "BROKER_SIGNING_KEY"      # audit signing key file (default: keys/broker_signing.key)
 
 
 def _module_exists(path: str) -> bool:
@@ -142,6 +146,9 @@ class Modules:
     append: Callable | None = None                 # None: a fresh in-memory stub audit log
     configure: Callable | None = None              # real audit only
     sign_decision: Callable = stubs.sign_decision
+    set_registry: Callable = stubs.set_registry
+    revoke: Callable = stubs.revoke
+    restore: Callable = stubs.restore
     TrustEngine: type = stubs.TrustEngine
     DefenceManager: type = stubs.DefenceManager
     BurstDetector: type = stubs.BurstDetector
@@ -175,21 +182,23 @@ class Modules:
             if name not in GROUPS:
                 ignored[name] = "unknown module name"
                 continue
-            path, functions = GROUPS[name]
-            if not _module_exists(path):
-                ignored[name] = f"{path} does not exist on this branch yet; using the stub"
-                continue
-            try:
-                module = importlib.import_module(path)
-            except Exception as exc:  # noqa: BLE001 - a broken real module must not stop the broker
-                ignored[name] = f"{path} could not be imported ({type(exc).__name__}); using the stub"
-                continue
-            for fn in functions:
-                value = getattr(module, fn, None)
-                if value is None:
-                    ignored[f"{name}.{fn}"] = f"{path} has no {fn}; using the stub"
-                else:
-                    found[fn] = value
+            parts = GROUPS[name]
+            for path, functions in parts:
+                key = name if len(parts) == 1 else f"{name}:{path.rsplit('.', 1)[-1]}"
+                if not _module_exists(path):
+                    ignored[key] = f"{path} does not exist on this branch yet; using the stub"
+                    continue
+                try:
+                    module = importlib.import_module(path)
+                except Exception as exc:  # noqa: BLE001 - a broken real module must not stop the broker
+                    ignored[key] = f"{path} could not be imported ({type(exc).__name__}); using the stub"
+                    continue
+                for fn in functions:
+                    value = getattr(module, fn, None)
+                    if value is None:
+                        ignored[f"{name}.{fn}"] = f"{path} has no {fn}; using the stub"
+                    else:
+                        found[fn] = value
         mods = cls(**found)
         mods.ignored = ignored
         for fn in found:
@@ -201,8 +210,8 @@ class Modules:
 
     def group_status(self) -> dict[str, str]:
         out = {}
-        for name, (_, functions) in GROUPS.items():
-            real = [self.is_real(f) for f in functions]
+        for name, parts in GROUPS.items():
+            real = [self.is_real(f) for _, functions in parts for f in functions]
             out[name] = "real" if all(real) else "stub" if not any(real) else "partial"
         return out
 
@@ -265,6 +274,9 @@ class Broker:
         self._client = client
         self._agent_urls = dict(agent_urls) if agent_urls is not None else None
         self._environ = environ
+        # The per-run secret the broker sends to agents in X-Broker-Token (BROKER_FORWARD_TOKEN),
+        # so an agent can refuse requests that did not come through the broker. Never logged.
+        self._forward_token = environ.get(FORWARD_ENV_VAR, "").strip() or None
         self._clock = clock
         self._timeout = forward_timeout
         self._lock = threading.RLock()
@@ -280,6 +292,7 @@ class Broker:
         self._defence_seen = 0                   # how many DefenceManager.log() events are audited
         self.startup: dict[str, Any] = {"started": False, "audit_configured": False,
                                         "revocation_registry": False}
+        self.registry = None
 
     # --- startup ----------------------------------------------------------------------------
 
@@ -288,7 +301,8 @@ class Broker:
         revocation module the identity registry. Raises BrokerStartupError with a fix."""
         M = self.modules
         if M.is_real("configure"):
-            key_path = Path(signing_key_path or DEFAULT_SIGNING_KEY)
+            key_path = Path(signing_key_path or self._environ.get(SIGNING_KEY_ENV, "").strip()
+                            or DEFAULT_SIGNING_KEY)
             if not key_path.is_file():
                 raise BrokerStartupError(
                     f"real audit is on (BROKER_REAL includes audit) but the broker signing key "
@@ -303,16 +317,33 @@ class Broker:
             self.startup["audit_configured"] = True
         elif M.is_real("append"):
             raise BrokerStartupError("real audit append without configure(): check broker/audit/log.py")
-        if M.is_real("verify_identity") and _module_exists(REVOCATION_MODULE):
-            from broker.identity import verify as identity_verify
-            try:
-                registry = identity_verify.default_verifier().registry
-            except Exception as exc:  # noqa: BLE001
-                raise BrokerStartupError(f"real identity is on but the registry could not be loaded "
-                                         f"({type(exc).__name__}: {exc}); run scripts/issue_credentials.py")
-            importlib.import_module(REVOCATION_MODULE).set_registry(registry)
-            self.startup["revocation_registry"] = True
+        if M.is_real("verify_identity") or M.is_real("evaluate_policy"):
+            # One registry for identity, policy and revocation, read from BROKER_KEYS_DIR (a run's
+            # own keys) or keys/. The real modules' public classes are used with it, so their
+            # module-level defaults (which always read keys/) are never touched.
+            registry = self._load_registry()
+            if M.is_real("verify_identity"):
+                from broker.identity.verify import IdentityVerifier
+                M.verify_identity = IdentityVerifier(registry).verify
+            if M.is_real("evaluate_policy"):
+                from broker.policy.engine import PolicyEngine
+                M.evaluate_policy = PolicyEngine(registry).evaluate
+            self.registry = registry
+            if M.is_real("verify_identity") and M.is_real("set_registry"):
+                M.set_registry(registry)
+                self.startup["revocation_registry"] = True
         self.startup["started"] = True
+
+    def _load_registry(self):
+        from broker.identity.registry import AgentRegistry
+        keys_dir = Path(self._environ.get(KEYS_DIR_ENV, "").strip() or REPO_ROOT / "keys")
+        try:
+            return AgentRegistry.from_credentials_dir(keys_dir)
+        except Exception as exc:  # noqa: BLE001
+            raise BrokerStartupError(
+                f"real identity/policy is on but the agent registry could not be loaded from "
+                f"{keys_dir.name}/ ({type(exc).__name__}); run scripts/issue_credentials.py "
+                f"(or set {KEYS_DIR_ENV})") from None
 
     # --- entry point ------------------------------------------------------------------
 
@@ -595,8 +626,10 @@ class Broker:
         http = self._client or httpx.Client(timeout=self._timeout)
         try:
             # The token and proof stay with the broker: receivers get the envelope only.
-            resp = http.post(url, content=env.model_dump_json(),
-                             headers={"Content-Type": "application/json"})
+            headers = {"Content-Type": "application/json"}
+            if self._forward_token:
+                headers[FORWARD_HEADER] = self._forward_token
+            resp = http.post(url, content=env.model_dump_json(), headers=headers)
         except httpx.HTTPError as exc:
             raise _ForwardError(f"{env.receiver!r} unreachable ({type(exc).__name__})") from None
         finally:
@@ -773,6 +806,33 @@ class Broker:
             self._audit_defence_events()
             state = self.modules.trust.get(agent)
         return {"agent": agent, "T": float(state.T), "state": state.state, "released_by": reviewer}
+
+
+    def revoke(self, agent: str, by: str) -> dict:
+        return self._registry_change("revoke", agent, by)
+
+    def restore(self, agent: str, by: str) -> dict:
+        return self._registry_change("restore", agent, by)
+
+    def _registry_change(self, kind: str, agent: str, by: str) -> dict:
+        """Revoke or restore through the module registry (PR #8 revocation when defence is
+        real). Raises UnknownAgentError, or ValueError when the change could not be made."""
+        if agent not in self.known_agents():
+            raise UnknownAgentError(f"unknown agent {agent!r}")
+        change = self.modules.revoke if kind == "revoke" else self.modules.restore
+        with self._lock:
+            try:
+                change(agent)
+            except (KeyError, ValueError, RuntimeError) as exc:
+                raise ValueError(f"{kind} failed for {agent!r} ({type(exc).__name__})") from None
+            entry = {"kind": kind, "ts": _iso(self._clock()), "agent": agent, "by": by,
+                     "reason_code": None, "denials": None}
+            entry_hash = self.modules.append(entry)
+            self.events.append({**entry, "entry_hash": entry_hash})
+        real = self.modules.is_real(kind)
+        record = self.registry.get(agent) if (real and self.registry is not None) else None
+        return {"agent": agent, "done": kind, "by": by, "real": real,
+                "status": getattr(record, "status", None), "epoch": getattr(record, "epoch", None)}
 
 
 _default: Broker | None = None

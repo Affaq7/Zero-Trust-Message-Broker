@@ -207,9 +207,86 @@ or overwrites any that agents set; receivers trust them only with a valid
   `detected` columns exist in `results.csv`, empty in direct mode): from the
   decision fields in the logged envelopes, or a broker decision log.
 
-## 7. Related open items
+## 7. Broker mode in the testbed (F2-A), and related open items
 
-G3 for the outbound calls other than mail, A8's target (Q-S2: the database
+Sections 2, 3 and 6 describe the state before broker mode was wired. Since F2-A
+the answers are:
+
+**How an agent sends in broker mode.** With `MODE=broker`, `send_message()`
+posts every request to the broker (`BROKER_URL/message`) instead of to the
+receiver, which answers Q26. The request carries the agent's issued token in
+`Authorization: Bearer <token>` and a per-message proof in `X-Agent-Proof`,
+made by `broker.identity.client.make_proof()` with the agent instance's own
+key (identity spec sections 2 and 3). The token and key come from the agent's
+credential file (`AGENT_CREDENTIALS`, `AGENT_KEYS_DIR`). Without issued
+credentials, or without `BROKER_URL`, nothing is sent and the agent gets a
+clear error. The broker forwards an allowed request to the receiver's wrapper
+(`AGENT_URLS`, read by the broker), which handles it exactly as in direct
+mode; receivers no longer answer 501. When forwarding, the broker adds the
+run's forwarding secret in `X-Broker-Token`, and an agent in broker mode
+refuses any request without it (401, or 403 for a wrong value), so agents
+cannot be reached around the broker (A12). The token and proof stay with the
+broker. Direct mode is unchanged.
+
+**The denial format.** A refusal is a normal response envelope with HTTP 200:
+`decision` is `DENY`, `QUARANTINE` or `HITL`, `reason_code` is the code from
+identity spec section 8, and the payload is `{"status": "denied"}` (`HITL`:
+`{"status": "pending"}`). The request is not forwarded. On the agent side
+`send_message()` turns such a reply into `BrokerDecisionError` (a `SendError`)
+with the message `broker <decision>: <reason_code>`; every agent already treats
+a `SendError` as a failed step, so the task finishes with a clear status. A
+`SANITIZE` reply is the receiver's reply with the cut fields listed in
+`redacted_fields`; it is returned as a normal reply.
+
+**How the runner starts the broker.** `python -m runner --mode broker ...`
+gives each repetition fresh processes, as in direct mode, plus a broker:
+
+1. it issues a new set of credential files with `scripts/issue_credentials.py`
+   into a temporary folder outside the repo (deleted when the repetition
+   ends); the repo's `keys/` folder is never used for them;
+2. it makes a new admin token for the run (kept in memory, never written);
+3. if the audit module is real and `keys/broker_signing.pub` does not exist,
+   it creates the broker signing key once with
+   `python -m broker.audit.signing_key create` (which never overwrites);
+4. it starts the broker as its own process (`uvicorn broker.app:app`, one
+   worker, because the broker keeps its state in memory) and the agents with
+   `MODE=broker`, waits for every `/health`, runs the scenario, then reads the
+   broker's `/api/events` and `/api/state` and stops everything.
+
+The decision and reason code of every message go to `results.csv`
+(`broker_decision`) and `broker_decisions.jsonl`; the broker's end state per
+repetition to `broker_state.json`; which modules were real or stubbed to
+`run_meta.json` (`broker`). The audit log is per run:
+`<repetition>/logs/broker_audit.jsonl`.
+
+**Attack scenarios in broker mode (F2-B).** The scripted attacker sends through
+the broker with the sender's issued credentials and a proof (token modes
+`valid`, `expired`, `stolen`, `reissued`, `missing`; `bypass_broker` sends
+straight to an agent's port for A12). Operator steps in a scenario (release,
+revoke, restore) are made by the runner with the run's admin token, which the
+attacker never sees. Each scenario's `expected_broker` block (text from
+`docs/scenario-control-map.md` section 3) says which decisions and reason codes
+the broker must give, in order, which audit events must appear, and the expected
+HTTP statuses and end state. The verdict (`detected` in `results.csv`, details
+in `broker_score.jsonl`) comes from the broker's decisions and the verified
+audit log, not from the agent's answer. A2 and A4 wait for the content checks
+(F3) and are recorded as not executed; A11 needs encrypted transport (A5) and is
+not applicable; A3 needs the live model.
+
+**Environment variables.**
+
+| Variable | Set on | Meaning |
+|---|---|---|
+| `BROKER_URL` | agents | the broker's base URL; every request goes there in broker mode |
+| `AGENT_CREDENTIALS`, `AGENT_KEYS_DIR` | agents | which credential file the agent uses, and the folder it is in |
+| `BROKER_REAL` | broker | modules that run for real, for example `identity,policy,validate,risk,trust,burst,defence,audit`; the rest are stubs (`/health` lists each function) |
+| `BROKER_ADMIN_TOKEN` | broker | required in `X-Admin-Token` for `/admin/*`; if it is not set, every admin call is refused |
+| `BROKER_KEYS_DIR` | broker | where the broker reads the agents' public keys (default `keys/`) |
+| `BROKER_SIGNING_KEY` | broker | the audit signing key file (default `keys/broker_signing.key`) |
+| `BROKER_FORWARD_TOKEN` | broker, agents | the run's forwarding secret, made by the runner in memory: the broker sends it in `X-Broker-Token`, agents in broker mode refuse requests without it |
+| `REQUIRE_BROKER_SIGNATURE` | agents | `1` makes an agent refuse requests without a valid broker signature (`X-Broker-Signature`); off by default, because the signature (A5) is not built yet, so turning it on refuses everything |
+
+**Still open:** G3 for the outbound calls other than mail, A8's target (Q-S2: the database
 agent with `justification`, or the planner via `planner.request`), Q2 (the
 malicious agent's role), Q6/Q19-Q22 (token details), Q26 (broker URL), S16
 (whether the catalog should carry risk ratings). Answered since the first

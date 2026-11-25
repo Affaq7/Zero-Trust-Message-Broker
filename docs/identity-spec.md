@@ -132,7 +132,8 @@ answered. The reply is checked by step 9 (content), not by identity.
 | Proof validity | accepted only if `now - 30 <= iat <= now + 5` | `verify.py` |
 | Proof `jti` replay window | each accepted `jti` kept 60 s (longer than 30 s + leeway, so a proof is remembered for its whole life) | `broker/identity/replay.py` |
 | Envelope `timestamp` | older than 60 s is `STALE_MESSAGE`; more than 5 s in the future is also `STALE_MESSAGE` | `broker/intercept/validate.py` |
-| Envelope `msg_id` dedupe window | each `msg_id` kept 120 s (longer than the 60 s stale window) | `validate.py` |
+| Envelope `msg_id` dedupe window | each `msg_id` kept 120 s (longer than the 60 s stale window), at most 100,000 at once; when full the oldest is dropped (a replay of a dropped id still carries the same proof `jti`, so step 2 refuses it with `PROOF_REPLAY`) | `validate.py` |
+| Message size | HTTP body at most 128 KB, checked on the raw bytes before parsing; the whole parsed message also at most 128 KB; the payload at most 64 KB | `validate.py` |
 
 All times are whole seconds from `time.time()`. State is in memory only; a
 broker restart clears both caches (Redis is FYP-II).
@@ -154,7 +155,7 @@ Calls for Amna's revocation code (all take the agent name, all are idempotent):
 | Call | Effect | Old tokens afterwards |
 |---|---|---|
 | `suspend(agent)` | status `suspended` | refused with `AGENT_SUSPENDED`; valid again after `restore()` |
-| `revoke(agent)` | status `revoked`, **epoch + 1** | refused with `AGENT_REVOKED`; after `restore()` still refused with `STALE_EPOCH` until a new token is issued with the new epoch |
+| `revoke(agent)` | status `revoked`, **epoch + 1** | refused with `STALE_EPOCH`, also after `restore()`, until a new token is issued with the new epoch; a new token for a still revoked agent is refused with `AGENT_REVOKED` |
 | `restore(agent)` | status `active`, epoch unchanged | see above |
 
 **Epoch rule:** a token is valid only while its `epoch` equals the registry
@@ -186,9 +187,20 @@ roles claimed in the message:
 3. Every agent in the chain after `user` is registered, and its registry role is
    in the action's `allowed_roles`, else `DELEGATION_EXCEEDS_DELEGATOR`. A
    delegate can never do more than any agent that delegated to it.
+4. Exception (`chain_exempt` in `broker/policy/rules.yaml`, added 26 Nov after
+   Afaq's broker-mode run): `mail.deliver` and `web.fetch_page` skip only the
+   role part of rule 3. Without it, N3 (tool to mailer, chain `user, planner,
+   tool`) and N4 (research to tool, chain `user, planner, research`) were denied,
+   because the planner may not call those actions itself. Both are downstream
+   steps, sent only while serving an upstream request that was fully checked.
+   Rules 1 and 2, the role and receiver gates, and "every agent registered"
+   still apply. Only Permitted actions may be listed.
 
 Example A7: chain `user, research, planner`, action `db.query_rows`. The planner
-may call it, research may not, so `DELEGATION_EXCEEDS_DELEGATOR`.
+may call it, research may not, so `DELEGATION_EXCEEDS_DELEGATOR`. A relay of an
+email the same way (`planner` to `tool`, `tool.send_email_internal`, research in
+the chain) is denied at that hop for the same reason, so the tool never sends the
+`mail.deliver` that would follow.
 
 `justification` text is never read by policy (A8 gets the same decision as A1).
 
@@ -220,9 +232,9 @@ its code and `ok=False`. Success returns `ok=True` with `agent`, `role`,
 | 18 | `ath` matches the token | `PROOF_TOKEN_MISMATCH` |
 | 19 | `msg_hash` matches the envelope and `trace_id` equals `env.trace_id` | `MSG_HASH_MISMATCH` |
 | 20 | proof `jti` not seen in the last 60 s (then recorded) | `PROOF_REPLAY` |
-| 21 | registry status is not `revoked` | `AGENT_REVOKED` |
-| 22 | registry status is not `suspended` | `AGENT_SUSPENDED` |
-| 23 | token `epoch ==` registry epoch | `STALE_EPOCH` |
+| 21 | token `epoch ==` registry epoch (checked first, so A10 is `STALE_EPOCH`; K-R2) | `STALE_EPOCH` |
+| 22 | registry status is not `revoked` | `AGENT_REVOKED` |
+| 23 | registry status is not `suspended` | `AGENT_SUSPENDED` |
 
 The proof `jti` is recorded only after the proof's signature and freshness
 pass, so unsigned junk cannot fill the cache.
@@ -238,7 +250,7 @@ change.**
 | Code | Meaning |
 |---|---|
 | `MALFORMED_JSON` | body is not a JSON object |
-| `PAYLOAD_TOO_LARGE` | payload over 64 KB (65,536 bytes of compact JSON) |
+| `PAYLOAD_TOO_LARGE` | payload over 64 KB (65,536 bytes of compact JSON), or the whole message over 128 KB (raw body bytes before parsing, or the parsed message) |
 | `BAD_SCHEMA_VERSION` | `schema_version` is not `"0.2"` |
 | `BAD_ENVELOPE` | fails the `Envelope` structure (missing, wrong type or extra field) |
 | `RULE_VIOLATION` | `rule_violations()` is not empty |
@@ -250,7 +262,11 @@ Forged broker fields on a request are **removed, not rejected**:
 `validate_envelope` returns `ok=True` with `reason_code="BROKER_FIELDS_STRIPPED"`
 as a note for the audit log. An unknown action skips the payload check and is
 refused by policy with `UNKNOWN_ACTION`. The injection-cue scan never blocks;
-it only sets `injection_cue=True`.
+it only sets `injection_cue=True`. It reads only the free-text fields of Amna's
+rule V3 (`justification`, `query`, `request`, `suggested_action`, `subject`,
+`body`). Step 1 accepts requests only: a `response` sent to the broker is
+`BAD_ENVELOPE` (replies are checked in step 9). A `msg_id` is recorded only
+when the whole message passes, so a rejected message does not use up its id.
 
 ### Step 2, identity: `broker/identity/verify.py` (Kissa, K2)
 
@@ -287,6 +303,8 @@ only narrow the catalog, never widen it.
 | Code | Step | Owner |
 |---|---|---|
 | `AGENT_QUARANTINED` | 3, quarantine check | Amna |
+| `RECIPIENT_NOT_APPROVED` | 5, request content check (A4: a recipient in `to`, `cc` or `bcc` that the original request did not ask for) | Afaq (F3) |
+| `REPLY_SANITIZED` | 9, reply content check: the `reason_code` of a SANITIZE decision (A2); also a trust event (decision and event rows below) | Afaq (F3) |
 | `HITL_PENDING`, `HITL_REJECTED`, `HITL_TIMEOUT` | 7, approval queue (F3) | Afaq |
 
 ### Steps 3 and 6, quarantine and trust (Amna, A2 and A3; rules V1 to V5 in `docs/detection-design.md`)
@@ -299,19 +317,22 @@ only narrow the catalog, never widen it.
 | `INJECTION_CUE` | event | V3 | lowers T (severity 0.5), audit log; from K4 (request) or F3 (reply) | `broker/trust/trust.py` (A2) |
 | `BURST_DETECTED` | event | V4 | state Suspicious for 20 messages, audit log; more than 10 requests per agent per trace | `broker/trust/rules.py` (A2) |
 | `INDIVIDUAL_DATA_REQUEST` | event | V5 | lowers T (severity 1.0), audit log; flag from F3 `minimum_necessary` | `broker/trust/trust.py` (A2) |
+| `REPLY_SANITIZED` | decision | step 9 | SANITIZE: the reply is cut to what the request asked for, and this is the `reason_code` of that reply (A2) | `broker.content` (F3) |
 | `REPLY_SANITIZED` | event | A2 scenario | lowers the responder's T (severity 0.5), audit log; from F3 | `broker/trust/trust.py` (A2) |
 
 A decision code is the `reason_code` of the broker's reply. An event code never
 decides on its own: it is passed to `TrustEngine.update(events=...)` and written
-to the audit log. V2 adds no code: it uses `ROLE_NOT_ALLOWED` and
-`DELEGATION_EXCEEDS_DELEGATOR` (step 4), counted once.
+to the audit log. `REPLY_SANITIZED` is the one code that is both: F3 sets it as
+the SANITIZE decision's `reason_code`, and the same sanitising is passed to the
+trust engine as an event (agreed by Amna, 26 Nov). V2 adds no code: it uses
+`ROLE_NOT_ALLOWED` and `DELEGATION_EXCEEDS_DELEGATOR` (step 4), counted once.
 
 ### Expected identity codes for the scenarios (input to K-R2)
 
 | Scenario | Code |
 |---|---|
 | A6 expired token | `TOKEN_EXPIRED` |
-| A10 token used after revocation | `AGENT_REVOKED` (`STALE_EPOCH` once the agent is restored without a new token) |
+| A10 token used after revocation | `STALE_EPOCH` |
 | A14 stolen token, thief signs the proof with own key | `PROOF_KEY_MISMATCH` |
 
 A1, A8 and A13 pass identity and are refused by policy with `ROLE_NOT_ALLOWED`;

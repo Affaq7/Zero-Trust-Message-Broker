@@ -26,8 +26,13 @@ def test_processes_get_the_mode(tmp_path, given, expected):
                            **({} if given is None else {"mode": given}))
     tb = Testbed(config)
     tb._plan()
-    assert {p.env["MODE"] for name, p in tb.procs.items() if name != "mocks"} == {expected}
-    assert "MODE" not in tb.procs["mocks"].env                       # the mock services have no mode
+    try:
+        agents = {name: p for name, p in tb.procs.items() if name not in ("mocks", "broker")}
+        assert {p.env["MODE"] for p in agents.values()} == {expected}
+        assert "MODE" not in tb.procs["mocks"].env                   # the mock services have no mode
+        assert ("broker" in tb.procs) == (expected == "broker")      # broker mode adds the broker process
+    finally:
+        tb.stop()                                                     # removes a broker run's temp keys
 
 
 def test_an_inherited_mode_is_not_passed_on(monkeypatch, tmp_path):
@@ -93,16 +98,19 @@ def test_default_is_direct_and_tasks_complete(tmp_path, scenarios_dir):
     assert read_csv(run_dir / "results.csv")[0]["task_completed"] == "true"
 
 
-def test_broker_mode_starts_the_processes_in_broker_mode_and_tasks_fail(tmp_path, scenarios_dir, capsys):
+def test_broker_mode_runs_every_message_through_a_real_broker(tmp_path, scenarios_dir, capsys):
     code, run_dir = run_cli(tmp_path, scenarios_dir, "--mode", "broker")
     assert code == 0 and meta_of(run_dir)["mode"] == "broker"
     assert "MODE=broker" in capsys.readouterr().out
     [row] = read_csv(run_dir / "results.csv")
-    # the broker is not built: the planner cannot send, so the task does not complete
-    assert row["task_completed"] == "false" and row["status"] in ("error", "completed")
-    log = (run_dir / "X1" / "c1" / "rep01" / "processes" / "planner.log").read_text(encoding="utf-8", errors="replace")
-    assert "BrokerModeNotImplementedError" in log or "not implemented" in log
-    assert not list((run_dir / "X1" / "c1" / "rep01" / "logs").glob("database.jsonl"))   # nothing reached the database
+    # the planner's request went through the broker (real identity and policy) and was allowed
+    assert row["task_completed"] == "true" and row["broker_decision"] == "ALLOW:POLICY_ALLOW"
+    broker = meta_of(run_dir)["broker"]
+    assert {"verify_identity", "evaluate_policy"} <= set(broker["broker_real"]) and broker["stubbed"]
+    rep = run_dir / "X1" / "c1" / "rep01"
+    assert (rep / "processes" / "broker.log").exists()
+    assert [json.loads(line)["decision"] for line in
+            (run_dir / "broker_decisions.jsonl").read_text(encoding="utf-8").splitlines()] == ["ALLOW"]
 
 
 def test_the_report_shows_the_mode(tmp_path, scenarios_dir):
@@ -130,4 +138,4 @@ def test_resume_keeps_the_runs_mode_and_refuses_the_option(tmp_path, scenarios_d
     assert main([*args, "--resume", run_dir.name]) == 0
     assert meta_of(run_dir)["mode"] == "broker"
     [row] = read_csv(run_dir / "results.csv")
-    assert row["task_completed"] == "false"                           # the resumed repetition ran in broker mode too
+    assert row["broker_decision"] == "ALLOW:POLICY_ALLOW"             # the resumed repetition ran in broker mode too

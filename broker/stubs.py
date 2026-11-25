@@ -119,6 +119,24 @@ class DefenceManager:
         return [dict(e) for e in self._log]
 
 
+# --- revocation (real: broker/defence/revocation.py, Amna A3, PR #8) ----------------------
+
+revocations: list[tuple[str, str]] = []       # (call, agent), for tests
+
+
+def set_registry(registry: Any) -> None:
+    """Stub: nothing to remember (the stub identity check has no registry)."""
+
+
+def revoke(agent: str) -> None:
+    """Stub: recorded only. The stub identity check does not consult a registry."""
+    revocations.append(("revoke", agent))
+
+
+def restore(agent: str) -> None:
+    revocations.append(("restore", agent))
+
+
 # --- step 4: policy (real: broker/policy/engine.py) ---------------------------------------
 
 def evaluate_policy(env: Envelope, identity: IdentityResult) -> PolicyResult:

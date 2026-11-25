@@ -41,5 +41,21 @@
     ]}
   },
   "expected_decision": "DENY: planner.request is Permitted for research, but the relayed db.query_rows carries delegation_chain user -> research -> planner; a delegation-aware broker denies the relayed query because research is not entitled to db.query_rows (a delegate cannot exceed the delegator). planner.request itself stays Permitted.",
-  "entitled_parties": null
+  "entitled_parties": null,
+  "expected_broker": {
+    "expected_decision": "DENY (DELEGATION_EXCEEDS_DELEGATOR) on the relayed db.query_rows; planner.request itself is allowed",
+    "decisions": [
+      {
+        "decision": "DENY",
+        "reason_code": "DELEGATION_EXCEEDS_DELEGATOR"
+      },
+      {
+        "decision": "ALLOW",
+        "reason_code": "POLICY_ALLOW"
+      }
+    ],
+    "http_status": [
+      200
+    ]
+  }
 }
