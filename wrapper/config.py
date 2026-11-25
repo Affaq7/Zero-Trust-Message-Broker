@@ -38,6 +38,10 @@ class Settings:
     # and whether /message refuses requests without a valid broker signature (A5, default off).
     broker_url: str | None = None
     require_broker_signature: bool = False
+    # MODE=broker only: the per-run secret the broker sends in X-Broker-Token when it forwards a
+    # request. /message refuses any request without it, so agents cannot be reached around the
+    # broker (A12). Never shown in repr or logs.
+    broker_forward_token: str | None = field(default=None, repr=False)
 
     @property
     def impl(self) -> str:
@@ -83,4 +87,5 @@ def load_settings(environ: Mapping[str, str] = os.environ) -> Settings:
                     agent_impl=environ.get("AGENT_IMPL", "").strip() or None,
                     agent_role=environ.get("AGENT_ROLE", "").strip() or None,
                     broker_url=broker_url,
-                    require_broker_signature=flag in ("1", "true", "yes", "on"))
+                    require_broker_signature=flag in ("1", "true", "yes", "on"),
+                    broker_forward_token=environ.get("BROKER_FORWARD_TOKEN", "").strip() or None)

@@ -14,6 +14,7 @@ AGENT_IMPL picks the code that runs under AGENT_NAME, so the runner can start
 an impostor under a victim's name (decision M3).
 """
 
+import hmac
 import json
 import logging
 
@@ -50,6 +51,20 @@ def _error(status: int, message: str, **extra) -> JSONResponse:
 # (broker/transport/signing.py, not on main yet); until that module offers
 # verify_request_signature(signature) -> bool, every request is refused (fail closed).
 BROKER_SIGNATURE_HEADER = "X-Broker-Signature"
+# MODE=broker: the broker's per-run forwarding secret (BROKER_FORWARD_TOKEN). A request without it
+# did not come through the broker and is refused. Compared in constant time; the value never
+# appears in an error or a log.
+BROKER_FORWARD_HEADER = "X-Broker-Token"
+
+
+def _forwarding_refusal(expected: str | None, given: str | None) -> JSONResponse | None:
+    if not expected:
+        return _error(403, "MODE=broker needs BROKER_FORWARD_TOKEN; no request can be accepted")
+    if not given:
+        return _error(401, "requests must come through the broker")
+    if not hmac.compare_digest(given.encode("utf-8"), expected.encode("utf-8")):
+        return _error(403, "requests must come through the broker")
+    return None
 SIGNING_MODULE = "broker.transport.signing"
 
 
@@ -92,6 +107,11 @@ def create_app(settings: Settings) -> FastAPI:
     async def message(request: Request):
         # MODE=broker: requests arrive from the broker and are handled exactly as in direct
         # mode. With REQUIRE_BROKER_SIGNATURE on, a request needs a valid broker signature.
+        if settings.mode == "broker":
+            refusal = _forwarding_refusal(settings.broker_forward_token,
+                                          request.headers.get(BROKER_FORWARD_HEADER))
+            if refusal is not None:
+                return refusal
         if settings.mode == "broker" and settings.require_broker_signature:
             refusal = _broker_signature_refusal(request.headers.get(BROKER_SIGNATURE_HEADER))
             if refusal is not None:

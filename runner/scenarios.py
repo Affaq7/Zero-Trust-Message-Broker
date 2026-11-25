@@ -244,9 +244,32 @@ class ScriptStep(Strict):
     sender_role: Name | None = None
     msg_type: Literal["request", "response"] = "request"
     delegation_chain: list[str] | None = None
-    token: Literal["valid", "expired", "wrong_key", "missing"] = "valid"
+    # direct mode: valid / expired / wrong_key / missing stub tokens (nothing checks them).
+    # broker mode: valid = the sender's issued token and a proof with its own key; expired = a
+    # token that expired an hour ago (A6); stolen = research-stolen.json's token with a proof
+    # signed by a fresh key (A14); reissued = a new token with epoch ``token_epoch`` (A10);
+    # missing = no Authorization header and no proof.
+    token: Literal["valid", "expired", "wrong_key", "missing", "stolen", "reissued"] = "valid"
+    token_epoch: int | None = Field(default=None, ge=0)
+    # broker mode only: send straight to the receiver's own port instead of the broker (A12).
+    bypass_broker: bool = False
     extra_fields: dict[str, Any] = Field(default_factory=dict)
     pause_ms: int = Field(default=0, ge=0, le=10000)
+
+    @model_validator(mode="after")
+    def _epoch_for_reissued(self) -> "ScriptStep":
+        if (self.token == "reissued") != (self.token_epoch is not None):
+            raise ValueError("token_epoch is required for token 'reissued' and only for it")
+        return self
+
+
+class AdminStep(Strict):
+    """Broker mode only: an operator call the RUNNER makes between attack steps, with the run's
+    admin token (the attacker process never sees it): POST /admin/<admin> on the broker."""
+
+    admin: Literal["release", "revoke", "restore"]
+    agent: Name
+    by: Name                         # the reviewer (release) or the operator named in the audit log
 
 
 class ScriptedAttack(Strict):
@@ -254,7 +277,45 @@ class ScriptedAttack(Strict):
 
     sender: Name
     sender_role: Name
-    steps: list[ScriptStep] = Field(min_length=1, max_length=50)
+    steps: list[ScriptStep | AdminStep] = Field(min_length=1, max_length=50)
+
+    @property
+    def requests(self) -> list[ScriptStep]:
+        return [s for s in self.steps if isinstance(s, ScriptStep)]
+
+
+# --- what the broker is expected to do (broker mode, evidence-based scoring) ---------------------
+
+BrokerDecision = Literal["ALLOW", "SANITIZE", "HITL", "DENY", "QUARANTINE"]
+
+
+class ExpectedBrokerDecision(Strict):
+    decision: BrokerDecision
+    reason_code: str = Field(min_length=1)
+
+
+class ExpectedBroker(Strict):
+    """What the broker must do with this scenario under --mode broker. Scored from evidence: the
+    broker's decisions for the trace (broker_decisions.jsonl and the audit log) must equal
+    ``decisions`` in the order the broker finished them, the audit log must hold ``audit_events``
+    and verify, the scripted requests must get ``http_status``, and /api/state must show
+    ``final_quarantined`` at the end."""
+
+    # applicable: run and score in broker mode; pending_f3: needs the content checks (F3), not run
+    # yet; not_applicable: no broker mechanism to test (reason says why).
+    status: Literal["applicable", "pending_f3", "not_applicable"] = "applicable"
+    reason: str | None = None
+    expected_decision: str = Field(min_length=1)          # text from docs/scenario-control-map.md section 3
+    decisions: list[ExpectedBrokerDecision] | None = None  # None: not scored automatically (live model)
+    audit_events: list[Literal["quarantine", "release", "revoke", "restore"]] = Field(default_factory=list)
+    http_status: list[int] | None = None                   # per scripted request, in order (admin steps left out)
+    final_quarantined: dict[Name, bool] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _reason_when_not_run(self) -> "ExpectedBroker":
+        if self.status != "applicable" and not self.reason:
+            raise ValueError(f"expected_broker status {self.status} needs a reason")
+        return self
 
 
 # --- fake-LLM definitions ----------------------------------------------------
@@ -308,6 +369,14 @@ class Scenario(Strict):
     # Waiting for docs/scenario-coverage.md; accepted, may stay empty.
     expected_decision: str | None = None
     entitled_parties: dict[str, Any] | None = None
+    # What the broker must do under --mode broker (None: not scored in broker mode).
+    expected_broker: ExpectedBroker | None = None
+
+    def broker_status(self) -> str:
+        """applicable / not_applicable / not_executed / pending_f3 under --mode broker."""
+        if self.expected_broker is not None:
+            return self.expected_broker.status
+        return self.baseline
 
     @model_validator(mode="after")
     def _consistent(self) -> "Scenario":
@@ -325,8 +394,13 @@ class Scenario(Strict):
             raise ValueError(f"entry agent {self.entry.agent!r} is not in agents")
         if self.scripted is not None:
             for i, step in enumerate(self.scripted.steps):
-                if step.receiver not in names:
+                if isinstance(step, AdminStep):
+                    if self.expected_broker is None:
+                        raise ValueError(f"scripted step {i} is an admin step: only for broker-mode scenarios")
+                elif step.receiver not in names:
                     raise ValueError(f"scripted step {i} receiver {step.receiver!r} is not in agents")
+        if self.broker_status() == "applicable" and (not self.agents or (self.entry is None and self.scripted is None)):
+            raise ValueError("a scenario run in broker mode needs agents and an entry or scripted block")
         for a in self.agents:
             if a.behaviour is not None and a.impl != "malicious":
                 raise ValueError(f"agent {a.name!r} has a behaviour block but impl is not 'malicious'")

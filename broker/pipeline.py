@@ -105,6 +105,8 @@ GROUPS: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
     "signing": (("broker.transport.signing", ("sign_decision",)),),
 }
 FUNCTIONS: tuple[str, ...] = tuple(f for parts in GROUPS.values() for _, fns in parts for f in fns)
+FORWARD_ENV_VAR = "BROKER_FORWARD_TOKEN"  # per-run secret sent to agents when forwarding
+FORWARD_HEADER = "X-Broker-Token"
 KEYS_DIR_ENV = "BROKER_KEYS_DIR"            # registry source for real identity/policy (default: keys/)
 SIGNING_KEY_ENV = "BROKER_SIGNING_KEY"      # audit signing key file (default: keys/broker_signing.key)
 
@@ -265,6 +267,9 @@ class Broker:
         self._client = client
         self._agent_urls = dict(agent_urls) if agent_urls is not None else None
         self._environ = environ
+        # The per-run secret the broker sends to agents in X-Broker-Token (BROKER_FORWARD_TOKEN),
+        # so an agent can refuse requests that did not come through the broker. Never logged.
+        self._forward_token = environ.get(FORWARD_ENV_VAR, "").strip() or None
         self._clock = clock
         self._timeout = forward_timeout
         self._lock = threading.RLock()
@@ -527,8 +532,10 @@ class Broker:
         http = self._client or httpx.Client(timeout=self._timeout)
         try:
             # The token and proof stay with the broker: receivers get the envelope only.
-            resp = http.post(url, content=env.model_dump_json(),
-                             headers={"Content-Type": "application/json"})
+            headers = {"Content-Type": "application/json"}
+            if self._forward_token:
+                headers[FORWARD_HEADER] = self._forward_token
+            resp = http.post(url, content=env.model_dump_json(), headers=headers)
         except httpx.HTTPError as exc:
             raise _ForwardError(f"{env.receiver!r} unreachable ({type(exc).__name__})") from None
         finally:

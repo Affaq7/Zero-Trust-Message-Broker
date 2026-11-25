@@ -56,6 +56,8 @@ class TaskOutcome:
     # (from GET /api/events), and what the broker ran with (from GET /health).
     broker_events: list[dict] = field(default_factory=list)
     broker_info: dict | None = None
+    # MODE=broker with an expected_broker block: the evidence-based verdict (runner/broker_score.py).
+    broker_score: dict | None = None
 
 
 BROKER_EVENT_FIELDS = ("msg_id", "sender", "receiver", "action", "step", "decision", "reason_code",
@@ -73,6 +75,12 @@ def collect_broker(broker_url: str, trace_ids: list[str]) -> tuple[dict, dict[st
         if e.get("kind") == "decision" and e.get("trace_id") in per_trace:
             per_trace[e["trace_id"]].append({k: e.get(k) for k in BROKER_EVENT_FIELDS})
     return info, per_trace
+
+
+def _append_jsonl(path: Path, record: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -119,8 +127,8 @@ def run_repetition(scenario: Scenario, rep: int, run_dir: Path, *, concurrency: 
                    mode: str = "direct") -> list[TaskOutcome]:
     """``planner_prompt`` (v1/v2) overrides the scenario's own planner_prompt;
     both unset means the planner's default version."""
-    if scenario.baseline != "applicable":
-        raise ValueError(f"{scenario.id} is not applicable in direct mode; nothing to run")
+    if not _runnable(scenario, mode):
+        raise ValueError(f"{scenario.id} is not applicable in {mode} mode; nothing to run")
     rep_dir = rep_dir_for(run_dir, scenario.id, concurrency, rep)
     config = TestbedConfig(
         agents=[a.model_dump() for a in scenario.agents], run_dir=rep_dir, seed=rep,
@@ -166,7 +174,42 @@ def run_repetition(scenario: Scenario, rep: int, run_dir: Path, *, concurrency: 
     for o in outcomes:
         o.envelopes = collect_envelopes(log_dir, o.trace_id)
         o.llm_calls = collect_llm_calls(log_dir, o.trace_id)
+        if mode == "broker":
+            o.broker_score = _broker_score(scenario, o, log_dir, state)
     return outcomes
+
+
+def _runnable(scenario: Scenario, mode: str) -> bool:
+    return (scenario.broker_status() if mode == "broker" else scenario.baseline) == "applicable"
+
+
+def _broker_score(scenario: Scenario, o: TaskOutcome, log_dir: Path, state: dict | None,
+                  http_status: list[int] | None = None) -> dict | None:
+    """The evidence-based verdict for one trace, or None without an expected_broker block."""
+    if scenario.expected_broker is None:
+        return None
+    from runner.broker_score import score
+    from runner.processes import SIGNING_PUB
+    real = set((o.broker_info or {}).get("broker_real", []))
+    return score(scenario.expected_broker, broker_events=o.broker_events, trace_ids=[o.trace_id],
+                 log_dir=log_dir, audit_real="append" in real, public_key_path=SIGNING_PUB,
+                 http_status=http_status, final_state=state)
+
+
+def _admin_call(tb: Testbed, step: dict) -> tuple[int, Any]:
+    """An operator call the runner makes with the run's admin token (never given to the attacker)."""
+    kind = step["admin"]
+    body = ({"agent": step["agent"], "reviewer": step["by"]} if kind == "release"
+            else {"agent": step["agent"], "by": step["by"]})
+    try:
+        r = httpx.post(f"{tb.url('broker')}/admin/{kind}", json=body, timeout=30,
+                       headers={"X-Admin-Token": tb.admin_token or ""})
+    except httpx.TransportError as exc:
+        return 0, f"broker unreachable: {type(exc).__name__}"
+    try:
+        return r.status_code, r.json()
+    except ValueError:
+        return r.status_code, r.text
 
 
 def run_scripted_repetition(scenario: Scenario, rep: int, run_dir: Path, *,
@@ -180,6 +223,8 @@ def run_scripted_repetition(scenario: Scenario, rep: int, run_dir: Path, *,
     """
     if scenario.scripted is None:
         raise ValueError(f"{scenario.id} is not a scripted scenario")
+    if not _runnable(scenario, mode):
+        raise ValueError(f"{scenario.id} is not applicable in {mode} mode; nothing to run")
     rep_dir = rep_dir_for(run_dir, scenario.id, 1, rep)
     config = TestbedConfig(
         agents=[a.model_dump() for a in scenario.agents], run_dir=rep_dir, seed=rep,
@@ -194,34 +239,62 @@ def run_scripted_repetition(scenario: Scenario, rep: int, run_dir: Path, *,
         mocks_url = tb.url("mocks")
         httpx.post(f"{mocks_url}/reset", timeout=30).raise_for_status()
 
-        agent_urls = {name: proc.url for name, proc in tb.procs.items() if name != "mocks"}
-        script_cfg = {
+        agent_urls = {name: proc.url for name, proc in tb.procs.items() if name not in ("mocks", "broker")}
+        base_cfg = {
             "agent_urls": agent_urls,
             "sender": scenario.scripted.sender,
             "sender_role": scenario.scripted.sender_role,
-            "steps": [s.model_dump(mode="json") for s in scenario.scripted.steps],
             "log_path": str(script_log_path),
             "trace_id": trace_id,
             "max_steps": 50,
         }
+        if mode == "broker":
+            # The attacker gets the broker's address and the run's credential files (a compromised
+            # agent holds real credentials); never the admin token or the forwarding secret.
+            base_cfg.update({"mode": "broker", "broker_url": tb.url("broker"),
+                             "keys_dir": str(tb.secrets_dir / "keys")})
+        steps = [s.model_dump(mode="json") for s in scenario.scripted.steps]
         script_config_path.parent.mkdir(parents=True, exist_ok=True)
-        script_config_path.write_text(json.dumps(script_cfg), encoding="utf-8")
 
+        # Requests go to the scripted subprocess in runs; an admin step between them is made by
+        # the runner itself. Step numbers stay global and the log is one file.
         started = utc_now()
-        try:
-            result = subprocess.run(
-                [sys.executable, "-m", "agents.scripted", "--config", str(script_config_path)],
-                timeout=scenario.timeout_s, capture_output=True, text=True,
-                env={**os.environ, "PYTHONUNBUFFERED": "1"})
-            status = "completed" if result.returncode == 0 else "error"
-            error = result.stderr.strip() if result.returncode != 0 else None
-        except subprocess.TimeoutExpired:
-            status = "timeout"
-            error = f"scripted agent did not finish within {scenario.timeout_s}s"
+        status, error, done = "completed", None, 0
+        while done < len(steps) and status == "completed":
+            if "admin" in steps[done]:
+                code, body = _admin_call(tb, steps[done])
+                _append_jsonl(script_log_path, {"step": done, "admin": steps[done]["admin"],
+                                                "agent": steps[done]["agent"], "by": steps[done]["by"],
+                                                "http_status": code, "response_body": body,
+                                                "logged_at": iso(utc_now())})
+                done += 1
+                continue
+            end = done
+            while end < len(steps) and "admin" not in steps[end]:
+                end += 1
+            cfg = {**base_cfg, "steps": steps[done:end], "first_step": done, "append": done > 0}
+            script_config_path.write_text(json.dumps(cfg), encoding="utf-8")
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-m", "agents.scripted", "--config", str(script_config_path)],
+                    timeout=scenario.timeout_s, capture_output=True, text=True,
+                    env={**os.environ, "PYTHONUNBUFFERED": "1"})
+                if result.returncode != 0:
+                    status, error = "error", result.stderr.strip()
+            except subprocess.TimeoutExpired:
+                status = "timeout"
+                error = f"scripted agent did not finish within {scenario.timeout_s}s"
+            done = end
         ended = utc_now()
 
         gt_resp = httpx.get(f"{mocks_url}/ground-truth", timeout=30)
         ground_truth = gt_resp.json()["records"]
+        broker_info, broker_events, state = None, [], None
+        if mode == "broker":
+            broker_info, per_trace = collect_broker(tb.url("broker"), [trace_id])
+            broker_events = per_trace[trace_id]
+            state = httpx.get(f"{tb.url('broker')}/api/state", timeout=30).json()
+            (rep_dir / "broker_state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
 
     script_log = _read_jsonl(script_log_path)
     entries = [e for e in script_log if "step" in e]
@@ -235,6 +308,10 @@ def run_scripted_repetition(scenario: Scenario, rep: int, run_dir: Path, *,
         status=status, error=error, envelopes=envelopes,
         ground_truth=ground_truth, script_log=entries)
     o.llm_calls = collect_llm_calls(log_dir, trace_id)      # as run_repetition does; llm_time_ms is derived from it
+    if mode == "broker":
+        o.broker_info, o.broker_events = broker_info, broker_events
+        statuses = [e["http_status"] for e in entries if "admin" not in e]
+        o.broker_score = _broker_score(scenario, o, log_dir, state, http_status=statuses)
     return [o]
 
 

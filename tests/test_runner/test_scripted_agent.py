@@ -334,16 +334,17 @@ def test_none_is_left_out_of_the_csv_summary_and_report(tmp_path):
 
 # --- --mode broker refuses scripted scenarios (item 6) -----------------------------------------
 
-def test_broker_mode_refuses_an_explicit_scripted_scenario(tmp_path, capsys):
+def test_broker_mode_runs_a_scripted_scenario_through_the_broker(tmp_path):
     from runner.__main__ import main
-    code = main(["--results-dir", str(tmp_path), "--mode", "broker", "--scenario", "A1"])
-    err = capsys.readouterr().err
-    assert code == 2
-    assert "--mode broker does not run scripted or compromised-responder scenarios yet" in err
-    assert list(tmp_path.iterdir()) == []                                 # not run, no results folder, not scored
+    assert main(["--results-dir", str(tmp_path), "--mode", "broker", "--scenario", "A1"]) == 0
+    [run] = list(tmp_path.iterdir())
+    with open(run / "results.csv", encoding="utf-8", newline="") as f:
+        [row] = list(csv.DictReader(f))
+    assert (row["status"], row["attack_succeeded"]) == ("completed", "false")
+    assert (row["broker_decision"], row["detected"]) == ("DENY:ROLE_NOT_ALLOWED", "true")   # scored on evidence
 
 
-def test_broker_mode_skips_scripted_scenarios_when_none_were_named(tmp_path, capsys):
+def test_broker_mode_runs_scripted_scenarios_when_none_were_named(tmp_path, capsys):
     from runner.__main__ import main
     scen = tmp_path / "scen"
     scen.mkdir()
@@ -352,10 +353,12 @@ def test_broker_mode_skips_scripted_scenarios_when_none_were_named(tmp_path, cap
                             "not_executed_reason": "needs something that is not built"})
     code = main(["--results-dir", str(tmp_path / "res"), "--scenarios-dir", str(scen), "--mode", "broker"])
     out = capsys.readouterr()
-    assert code == 0 and "--mode broker skips scripted and compromised-responder scenarios" in out.err
+    assert code == 0 and "skips scripted" not in out.err                 # scripted scenarios run in broker mode now
     [run] = list((tmp_path / "res").iterdir())
     with open(run / "results.csv", encoding="utf-8", newline="") as f:
-        assert [(r["scenario_id"], r["status"]) for r in csv.DictReader(f)] == [("X5", "not_executed")]
+        rows = {r["scenario_id"]: r for r in csv.DictReader(f)}
+    assert (rows["X1"]["status"], rows["X5"]["status"]) == ("completed", "not_executed")
+    assert rows["X1"]["detected"] == ""                                  # no expected_broker block: not scored
 
 
 def test_direct_mode_still_accepts_scripted_scenarios(tmp_path):

@@ -59,10 +59,11 @@ SECRET_ASSIGNMENT = re.compile(
     """)
 
 # Quoted values that are obviously not secrets. The repo's tests and scenarios use stub
-# tokens and the scripted attacker's token modes (valid / expired / wrong_key / missing).
+# tokens and the scripted attacker's token modes (valid / expired / wrong_key / missing, and in
+# broker mode stolen / reissued). Only a value that is exactly one of these words is exempt.
 PLACEHOLDER_WORDS = re.compile(r"(?i)stub|fake|dummy|example|placeholder|marker")
-PLACEHOLDER_VALUES = {"valid", "invalid", "expired", "missing", "wrong_key", "none", "null",
-                      "changeme", "redacted"}
+PLACEHOLDER_VALUES = {"valid", "invalid", "expired", "missing", "wrong_key", "stolen", "reissued",
+                      "none", "null", "changeme", "redacted"}
 TEMPLATE_SYNTAX = re.compile(r"^(?:\$\{?\w+\}?|<[^>]+>|\{\{.*\}\}|\*{3,}|x{3,}|\.{3,})$", re.I)
 
 

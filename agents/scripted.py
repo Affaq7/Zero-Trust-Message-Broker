@@ -2,7 +2,14 @@
 
 Reads a config JSON (written by the runner), sends each step as a raw HTTP
 request to the victim agent's wrapper, and logs every exchange to
-script_log.jsonl.  The agent never modifies a payload, never generates text,
+script_log.jsonl.
+
+In broker mode (config "mode": "broker") every request goes to the broker with
+the sender's ISSUED credentials (the run's keys folder, never keys/) and a
+per-message proof, as a compromised agent holding real credentials would send
+it; token modes valid / expired / stolen / reissued / missing shape the
+identity attack. A step with bypass_broker goes straight to the receiver's own
+port (A12). The admin token is never given to this process.  The agent never modifies a payload, never generates text,
 and never judges success; every byte comes from the scenario JSON.  Evaluation
 is the runner's job after this process exits.
 
@@ -61,6 +68,46 @@ def _append_jsonl(path: Path, record: dict) -> None:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _broker_auth(step: dict, envelope: dict, sender: str, keys_dir: Path) -> dict[str, str]:
+    """Authorization and X-Agent-Proof headers for one request through the broker.
+
+    valid     the sender's issued token, proof signed with the sender's own key
+    expired   a token for the sender that expired an hour ago, proof with its key (A6)
+    stolen    research-stolen.json's token, proof signed with a fresh key (A14)
+    reissued  a new token with epoch token_epoch, signed with the sender's key (A10)
+    missing   neither header
+    """
+    from broker.identity.client import make_proof
+    from broker.identity.keys import private_key_from_text
+    from broker.identity.tokens import issue_expired_token, issue_token
+    from contracts.envelope import Envelope
+
+    mode = step.get("token", "valid")
+    if mode == "missing":
+        return {}
+    name = f"{STOLEN_FROM}-stolen" if mode == "stolen" else sender
+    cred = json.loads((keys_dir / f"{name}.json").read_text(encoding="utf-8"))
+    key = private_key_from_text(cred["private_key"])
+    if mode == "valid" or mode == "stolen":
+        token = cred["token"]
+    elif mode == "expired":
+        token = issue_expired_token(key, agent=cred["agent"], role=cred["role"], epoch=cred["epoch"])
+    elif mode == "reissued":
+        token = issue_token(key, agent=cred["agent"], role=cred["role"], epoch=int(step["token_epoch"]))
+    else:
+        raise ValueError(f"token mode {mode!r} is not used in broker mode")
+    proof_key = Ed25519PrivateKey.generate() if mode == "stolen" else key   # the thief has no key
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        headers["X-Agent-Proof"] = make_proof(Envelope.model_validate(envelope), token, proof_key)
+    except ValueError:
+        pass                                     # a deliberately malformed envelope gets no proof
+    return headers
+
+
+STOLEN_FROM = "research"         # scripts/issue_credentials.py copies research.json to research-stolen.json
+
+
 def _build_token(mode: str, sender: str, role: str, receiver: str,
                  key: Ed25519PrivateKey) -> str | None:
     if mode == "valid":
@@ -81,12 +128,20 @@ def run(config_path: str) -> int:
     log_path = Path(cfg["log_path"])
     trace_id: str = cfg.get("trace_id", str(uuid4()))
     max_steps: int = min(cfg.get("max_steps", MAX_STEPS), MAX_STEPS)   # the config can lower the cap, never raise it
+    broker_mode = cfg.get("mode", "direct") == "broker"
+    broker_url: str | None = cfg.get("broker_url")
+    keys_dir = Path(cfg["keys_dir"]) if cfg.get("keys_dir") else None
+    first_step: int = int(cfg.get("first_step", 0))      # the runner splits steps around admin calls
+    append: bool = bool(cfg.get("append", False))
+    if broker_mode and (not broker_url or keys_dir is None):
+        print("ABORT: broker mode needs broker_url and keys_dir", file=sys.stderr)
+        return 1
 
     if len(steps) > max_steps:
         print(f"ABORT: {len(steps)} steps exceed cap of {max_steps}", file=sys.stderr)
         return 1
 
-    for name, url in agent_urls.items():
+    for name, url in [*agent_urls.items(), *([("broker", broker_url)] if broker_mode else [])]:
         if not _is_loopback(url):
             print(f"ABORT: {name} URL {url} is not loopback", file=sys.stderr)
             return 1
@@ -102,17 +157,20 @@ def run(config_path: str) -> int:
             return 1
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text("", encoding="utf-8")          # a fresh log, never appended to an old one
+    if not append:
+        log_path.write_text("", encoding="utf-8")      # a fresh log, never appended to an old one
     creds_key = Ed25519PrivateKey.generate()
 
     ok_count = 0
     err_count = 0
 
-    for i, step in enumerate(steps):
+    for n, step in enumerate(steps):
+        i = first_step + n
         sender = step.get("sender") or default_sender
         role = step.get("sender_role") or default_role
         receiver = step["receiver"]
-        receiver_url = agent_urls[receiver]
+        via_broker = broker_mode and not step.get("bypass_broker", False)
+        receiver_url = broker_url if via_broker else agent_urls[receiver]
 
         envelope: dict = {
             "schema_version": SCHEMA_VERSION,
@@ -132,10 +190,13 @@ def run(config_path: str) -> int:
             envelope[k] = v
 
         token_mode = step.get("token", "valid")
-        token = _build_token(token_mode, sender, role, receiver, creds_key)
         headers: dict[str, str] = {"Content-Type": "application/json"}
-        if token is not None:
-            headers["Authorization"] = f"Bearer {token}"
+        if broker_mode:
+            headers.update(_broker_auth(step, envelope, sender, keys_dir))
+        else:
+            token = _build_token(token_mode, sender, role, receiver, creds_key)
+            if token is not None:
+                headers["Authorization"] = f"Bearer {token}"
 
         t0 = time.monotonic()
         try:
@@ -165,6 +226,7 @@ def run(config_path: str) -> int:
             "step": i,
             "envelope": envelope,
             "token_mode": token_mode,
+            "via": "broker" if via_broker else "direct",
             "http_status": status_code,
             "response_body": body,
             "elapsed_ms": elapsed_ms,

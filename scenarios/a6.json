@@ -35,5 +35,17 @@
     }
   },
   "expected_decision": "DENY: expired token",
-  "entitled_parties": null
+  "entitled_parties": null,
+  "expected_broker": {
+    "expected_decision": "DENY (TOKEN_EXPIRED)",
+    "decisions": [
+      {
+        "decision": "DENY",
+        "reason_code": "TOKEN_EXPIRED"
+      }
+    ],
+    "http_status": [
+      200
+    ]
+  }
 }
