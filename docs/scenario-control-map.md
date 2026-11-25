@@ -101,3 +101,29 @@ may still change" with a pointer to this map.
   AML.T0053 AI Agent Tool Invocation. ATLAS IDs are given only where they were
   confirmed; for A4, ATLAS also lists "Exfiltration via AI Agent Tool
   Invocation", whose ID was not confirmed, so it is left out of the table.
+
+## 6. Test cases TC-001 to TC-007 (report Table 9, for K-R3)
+
+Run all of Kissa's tests on a clean clone (from the repo root, after the install
+in the README):
+
+```powershell
+& ".\.venv\Scripts\python.exe" -m pytest "tests\test_broker" -q
+```
+
+That runs every broker test. Kissa's files are `test_registry.py`,
+`test_issue_credentials.py`, `test_file_credentials.py`, `test_proof_client.py`,
+`test_identity.py`, `test_policy.py`, `test_validate.py`,
+`test_policy_scenario_map.py` and `test_identity_policy_attacks.py`; the last one
+sends A1, A5, A6, A7, A8, A10, A13 and A14 through the real broker pipeline with
+the real validate, identity and policy modules and checks the code in section 1.
+
+| Test ID | Feature | Real tests (all under `tests/test_broker/`) | Note |
+|---|---|---|---|
+| TC-001 | FR-001 Enrolment | `test_registry.py::test_new_agent_is_active_with_epoch_zero`, `test_registry.py::test_one_key_cannot_serve_two_instances`, `test_registry.py::test_same_instance_and_key_twice_is_a_no_op`, `test_issue_credentials.py::test_creates_exactly_seven_files`, `test_issue_credentials.py::test_every_file_holds_a_valid_token_bound_to_its_key` | FYP-I has no enrolment token: credentials come from `issue_credentials.py` and the registry loads their public keys. A key is registered once. |
+| TC-002 | FR-002 Token and proof verification | `test_identity.py::test_poc1_legitimate_message_is_accepted` to `test_identity.py::test_poc9_suspended_agent` (the 9 cases of Appendix A), `test_identity.py::test_wrong_audience_for_a_direct_mode_style_token`, `test_identity.py::test_average_check_is_under_one_millisecond` | Every identity reason code has its own test in `test_identity.py`. |
+| TC-003 | FR-002 Replay and stolen token | `test_identity.py::test_poc2_replayed_proof`, `test_proof_client.py::test_first_use_is_fresh_and_second_is_a_replay`, `test_identity_policy_attacks.py::test_a14_stolen_token_signed_with_the_thiefs_key`, `test_identity.py::test_proof_signed_by_the_other_research_instance_is_a_key_mismatch` | |
+| TC-004 | FR-003 Delegation | `test_policy.py::test_three_agents_after_user_is_the_limit`, `test_policy.py::test_every_delegator_must_be_allowed_not_only_the_first`, `test_policy.py::test_privilege_borrowing_is_still_denied`, `test_identity_policy_attacks.py::test_a7_first_hop_is_allowed_and_the_relayed_query_is_denied` | Table-driven, not property-based: hypothesis is not in the project's dependencies. |
+| TC-005 | FR-004 Interception and schema | `test_validate.py::test_malformed_json`, `test_validate.py::test_bad_envelope_structure`, `test_validate.py::test_extra_envelope_field`, `test_validate.py::test_unknown_action_is_left_for_policy`, `test_policy.py::test_unknown_action_is_default_deny` | A12 (direct agent-to-agent) needs network isolation, FYP-II. |
+| TC-006 | FR-005 Policy | `test_policy.py::test_role_action_matrix`, `test_policy.py::test_hand_written_table_matches_the_catalog`, `test_policy.py::test_unknown_action_is_default_deny`, `test_identity_policy_attacks.py::test_policy_attack_is_denied_with_the_map_code` | Role and action are checked; the `resource` field is not yet part of policy. |
+| TC-007 | FR-006 MNI sanitisation | `test_pipeline.py::test_reply_with_redacted_fields_is_sanitized_and_the_responder_is_reported` | Afaq's F3, not Kissa's modules. |

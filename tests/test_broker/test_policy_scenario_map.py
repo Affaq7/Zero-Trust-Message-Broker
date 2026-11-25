@@ -136,3 +136,29 @@ def test_identity_rows_match_the_verifier(setup, scenario):
     result = IdentityVerifier(registry).verify(headers, env)
     assert ROWS[scenario]["decision"] == "DENY"
     assert result.reason_code == code_of(scenario)
+
+
+# --- section 6: TC-001 to TC-007 point at tests that exist ---------------------------------------
+
+def tc_rows() -> dict[str, list[str]]:
+    section = MAP.split("## 6. Test cases", 1)[1]
+    rows = {}
+    for line in section.splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) == 4 and re.fullmatch(r"TC-00[1-7]", cells[0]):
+            rows[cells[0]] = re.findall(r"`(test_\w+\.py)::(test_\w+)`", cells[2])
+    return rows
+
+
+def test_tc_001_to_007_are_all_mapped():
+    rows = tc_rows()
+    assert sorted(rows) == [f"TC-00{i}" for i in range(1, 8)]
+    assert all(rows.values()), "every TC names at least one test"
+
+
+@pytest.mark.parametrize("tc", [f"TC-00{i}" for i in range(1, 8)])
+def test_every_named_test_exists(tc):
+    for filename, name in tc_rows()[tc]:
+        path = REPO_ROOT / "tests" / "test_broker" / filename
+        assert path.exists(), f"{tc}: {filename} does not exist"
+        assert re.search(rf"^def {name}\(", path.read_text(encoding="utf-8"), re.M), f"{tc}: {filename}::{name} not found"
