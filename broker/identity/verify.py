@@ -213,15 +213,16 @@ class IdentityVerifier:
     # --- checks 21 to 23: registry state ---------------------------------------------------------
 
     def _check_state(self, claims: IdentityClaims) -> AgentRecord:
+        """Epoch first: after revoke() every earlier token is STALE_EPOCH (A10, K-R2)."""
         record = self.registry.get(claims.sub)          # fresh: status may have changed
         if record is None:
             raise _Reject("UNKNOWN_AGENT")
+        if claims.epoch != record.epoch:
+            raise _Reject("STALE_EPOCH")
         if record.status == "revoked":
             raise _Reject("AGENT_REVOKED")
         if record.status == "suspended":
             raise _Reject("AGENT_SUSPENDED")
-        if claims.epoch != record.epoch:
-            raise _Reject("STALE_EPOCH")
         return record
 
 

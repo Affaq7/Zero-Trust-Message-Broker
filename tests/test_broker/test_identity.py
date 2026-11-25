@@ -145,12 +145,14 @@ def test_poc7_a6_expired_token(verifier):
     assert code(send(verifier, request(), token=expired)) == "TOKEN_EXPIRED"
 
 
-def test_poc8_revoked_agent(verifier, registry):
+def test_poc8_a10_revoked_agent(verifier, registry):
+    """A10 (K-R2): the first message after revoke() is STALE_EPOCH."""
     env = request()
     registry.revoke("planner")
-    assert code(send(verifier, env)) == "AGENT_REVOKED"
-    registry.restore("planner")
     assert code(send(verifier, env)) == "STALE_EPOCH"                  # old epoch-0 token
+    assert code(send(verifier, env, token=token_for(epoch=1))) == "AGENT_REVOKED"  # new token, still revoked
+    registry.restore("planner")
+    assert code(send(verifier, env)) == "STALE_EPOCH"                  # old token stays dead
     assert send(verifier, env, token=token_for(epoch=1)).ok           # re-issued token works
 
 
