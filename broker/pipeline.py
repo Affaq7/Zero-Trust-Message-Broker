@@ -68,6 +68,9 @@ TRUST_EVENTS = ("INJECTION_CUE", "BURST_DETECTED", "INDIVIDUAL_DATA_REQUEST", "R
 AUDIT_EVENT_KINDS = ("quarantine", "release", "revoke", "restore")
 DENIED_PAYLOAD = {"status": "denied"}
 PENDING_PAYLOAD = {"status": "pending"}
+# A request waiting for a human (HITL_PENDING) expires after this long; the expiry is checked
+# when the next message arrives (no timer thread) and is recorded as HITL_TIMEOUT.
+HITL_TIMEOUT_SECONDS = 600
 DEFAULT_FORWARD_TIMEOUT_S = 60.0
 MAX_EVENTS = 1000
 # V4 (BurstDetector) counts requests per (agent, trace_id). The broker never sees a task end
@@ -84,6 +87,10 @@ class BrokerStartupError(RuntimeError):
 
 class UnknownAgentError(ValueError):
     """/admin/release named an agent the broker does not know."""
+
+
+class UnknownApprovalError(ValueError):
+    """/admin/approve or /admin/reject named no open approval (unknown, decided or expired)."""
 
 
 # --- module registry, per function ----------------------------------------------------------
@@ -277,6 +284,8 @@ class Broker:
         self.events: deque = deque(maxlen=MAX_EVENTS)
         self.pending: dict[str, dict] = {}       # approval_id -> metadata (F3 adds the queue)
         self._pending_envs: dict[str, Envelope] = {}
+        self._pending_since: dict[str, float] = {}
+        self.decided: dict[str, dict] = {}       # approved, rejected or expired items, oldest first
         self._epochs: dict[str, int | None] = {}
         self._trace_seen: OrderedDict[str, float] = OrderedDict()   # trace_id -> last seen, oldest first
         self._last_sweep: float | None = None
@@ -342,6 +351,10 @@ class Broker:
         """Run the ten steps for one request. Never raises: any failure becomes a DENY."""
         r = raw if isinstance(raw, dict) else {}
         tr = _Trace(raw_sender=_id_or(r.get("sender"), None), raw_msg_id=_id_or(r.get("msg_id"), None))
+        try:
+            self._expire_approvals(self._clock())
+        except Exception as exc:  # noqa: BLE001 - expiry bookkeeping must not stop a message
+            log.error("approval expiry failed: %s", type(exc).__name__)
         try:
             reply = self._run(raw, dict(headers or {}), tr)
         except Exception as exc:  # noqa: BLE001 - the broker must not crash on any message
@@ -424,6 +437,12 @@ class Broker:
                 return self._refusal(raw, env, "HITL", "HITL_PENDING", PENDING_PAYLOAD)
             self._settle(raw, tr, "ALLOW", policy.reason_code, risk, request_cue, now)
 
+        return self._forward_and_inspect(raw, env, tr)
+
+    def _forward_and_inspect(self, raw: Any, env: Envelope, tr: _Trace) -> Envelope:
+        """Steps 8 and 9: forward an allowed request and check the reply. Also used when a
+        human approves a pending request, so an approved request gets the same reply check."""
+        M = self.modules
         tr.step = 8                                                     # 8 forward
         try:
             reply = self._forward(env)
@@ -508,8 +527,83 @@ class Broker:
             "approval_id": approval_id, "msg_id": env.msg_id, "trace_id": env.trace_id,
             "sender": env.sender, "receiver": env.receiver, "action": env.action,
             "resource": env.resource, "policy_reason": policy_reason, "created_at": _iso(now),
+            "status": "pending",
         }
         self._pending_envs[approval_id] = env
+        self._pending_since[approval_id] = now
+
+    # --- approval queue (F3): approve, reject, expire ---------------------------------------------
+
+    def approval(self, approval_id: str) -> dict | None:
+        """One approval item, open or decided (metadata and outcome only, never a payload)."""
+        with self._lock:
+            item = self.pending.get(approval_id) or self.decided.get(approval_id)
+            return dict(item) if item else None
+
+    def approve(self, approval_id: str, by: str) -> dict:
+        """A human approved the request: forward it through steps 8 and 9 (with the reply
+        check) and record the outcome on the item and in the audit log."""
+        with self._lock:
+            policy_reason = (self.pending.get(approval_id) or {}).get("policy_reason")
+        env = self._take_pending(approval_id)
+        # The approved request keeps its policy reason (e.g. NEEDS_APPROVAL); who approved it is
+        # on the item, its event and the audit trail.
+        tr = _Trace(env=env, agent=env.sender, reason_code=policy_reason)
+        try:
+            reply = self._forward_and_inspect(None, env, tr)
+        except Exception as exc:  # noqa: BLE001
+            log.error("approved request failed: %s", type(exc).__name__)
+            tr.decision, tr.reason_code, tr.forwarded = "DENY", "INTERNAL_ERROR", False
+            reply = self._refusal(None, env, "DENY", "INTERNAL_ERROR")
+        self._finish(reply, tr)
+        outcome = {"decision": reply.decision, "reason_code": reply.reason_code, "forwarded": tr.forwarded,
+                   "reply_status": reply.payload.get("status") if isinstance(reply.payload, dict) else None,
+                   "redacted_fields": list(tr.redacted_fields)}
+        return self._close_approval(approval_id, "approved", by, outcome)
+
+    def reject(self, approval_id: str, by: str) -> dict:
+        """A human rejected the request: nothing is forwarded; HITL_REJECTED is recorded."""
+        env = self._take_pending(approval_id)
+        return self._close_approval(approval_id, "rejected", by,
+                                    self._record_closed(env, "HITL_REJECTED"))
+
+    def _expire_approvals(self, now: float) -> None:
+        """Requests pending longer than HITL_TIMEOUT_SECONDS are closed as HITL_TIMEOUT."""
+        with self._lock:
+            due = [a for a, since in self._pending_since.items() if now - since > HITL_TIMEOUT_SECONDS]
+        for approval_id in due:
+            try:
+                env = self._take_pending(approval_id)
+            except UnknownApprovalError:
+                continue                                    # decided meanwhile
+            self._close_approval(approval_id, "expired", "broker", self._record_closed(env, "HITL_TIMEOUT"))
+
+    def _take_pending(self, approval_id: str) -> Envelope:
+        with self._lock:
+            if approval_id not in self.pending:
+                raise UnknownApprovalError(f"no open approval {approval_id!r}")
+            self._pending_since.pop(approval_id, None)
+            return self._pending_envs.pop(approval_id)
+
+    def _record_closed(self, env: Envelope, reason: str) -> dict:
+        """Audit line and event for a request that is closed without being forwarded."""
+        tr = _Trace(env=env, agent=env.sender, step=7, decision="DENY", reason_code=reason)
+        reply = self._refusal(None, env, "DENY", reason)
+        self._finish(reply, tr)
+        return {"decision": "DENY", "reason_code": reason, "forwarded": False}
+
+    def _close_approval(self, approval_id: str, status: str, by: str, outcome: dict) -> dict:
+        with self._lock:
+            item = self.pending.pop(approval_id)
+            item.update({"status": status, "decided_by": by, "decided_at": _iso(self._clock()),
+                         "result": outcome})
+            self.decided[approval_id] = item
+            while len(self.decided) > MAX_EVENTS:
+                self.decided.pop(next(iter(self.decided)))
+            self.events.append({"kind": f"approval_{status}", "ts": item["decided_at"],
+                                "approval_id": approval_id, "msg_id": item["msg_id"],
+                                "trace_id": item["trace_id"], "by": by, **outcome})
+            return dict(item)
 
     # --- forwarding (step 8) --------------------------------------------------------------
 

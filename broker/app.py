@@ -8,6 +8,8 @@
     POST /admin/release  {"agent", "reviewer"}; header X-Admin-Token required
     POST /admin/revoke   {"agent", "by"?}: registry revoke (epoch + 1); X-Admin-Token required
     POST /admin/restore  {"agent", "by"?}: registry restore; X-Admin-Token required
+    POST /admin/approve  {"approval_id", "by"?}: forward a HITL request (steps 8 and 9)
+    POST /admin/reject   {"approval_id", "by"?}: close a HITL request as HITL_REJECTED
 
 Admin routes need the header X-Admin-Token equal to BROKER_ADMIN_TOKEN (compared in
 constant time). If BROKER_ADMIN_TOKEN is not set, every admin call is refused (fail
@@ -30,13 +32,20 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
-from broker.pipeline import Broker, UnknownAgentError
+from broker.pipeline import Broker, UnknownAgentError, UnknownApprovalError
 
 ADMIN_HEADER = "X-Admin-Token"
 # The largest /message body the broker reads. Larger bodies get a DENY envelope with
 # PAYLOAD_TOO_LARGE without being read further (step 1 also caps the payload at 64 KB).
 MAX_BODY_BYTES = 256 * 1024
 ADMIN_ENV_VAR = "BROKER_ADMIN_TOKEN"
+
+
+class ApprovalRequest(BaseModel):
+    """Body of /admin/approve and /admin/reject. ``by`` names the approver for the audit log."""
+
+    approval_id: str = Field(min_length=1, max_length=128)
+    by: str = Field(default="admin", min_length=1, max_length=128)
 
 
 class ReleaseRequest(BaseModel):
@@ -177,6 +186,37 @@ def create_app(broker: Broker | None = None, environ: Mapping[str, str] = os.env
     @app.post("/admin/restore")
     async def restore(request: Request) -> JSONResponse:
         return await registry_change(request, "restore")
+
+    async def decide(request: Request, kind: str) -> JSONResponse:
+        route = f"/admin/{kind}"
+        refusal = admin_refusal(request, route)
+        if refusal is not None:
+            return refusal
+        try:
+            req = ApprovalRequest.model_validate_json(await request.body())
+        except ValidationError:
+            broker.admin_event(f"{kind}_refused", outcome="400 bad body")
+            return _error(400, 'body must be {"approval_id": "..."} (optional "by")')
+        act = broker.approve if kind == "approve" else broker.reject
+        try:
+            result = await run_in_threadpool(act, req.approval_id, req.by)
+        except UnknownApprovalError:
+            broker.admin_event(f"{kind}_refused", approval_id=req.approval_id, by=req.by,
+                               outcome="400 no open approval with this id")
+            return _error(400, f"no open approval {req.approval_id!r}")
+        except Exception as exc:  # noqa: BLE001 - never a 500 from an admin route
+            broker.admin_event(f"{kind}_refused", approval_id=req.approval_id, by=req.by,
+                               outcome=f"400 {type(exc).__name__}")
+            return _error(400, f"{kind} failed")
+        return JSONResponse(result, status_code=200)
+
+    @app.post("/admin/approve")
+    async def approve(request: Request) -> JSONResponse:
+        return await decide(request, "approve")
+
+    @app.post("/admin/reject")
+    async def reject(request: Request) -> JSONResponse:
+        return await decide(request, "reject")
 
     return app
 
