@@ -64,10 +64,17 @@ BROKER_EVENT_FIELDS = ("msg_id", "sender", "receiver", "action", "step", "decisi
                        "events", "forwarded")
 
 
-def collect_broker(broker_url: str, trace_ids: list[str]) -> tuple[dict, dict[str, list[dict]]]:
+def read_headers(read_token: str | None) -> dict[str, str]:
+    """X-Read-Token for the broker's /api/state and /api/events (the run's own read token)."""
+    return {"X-Read-Token": read_token or ""}
+
+
+def collect_broker(broker_url: str, trace_ids: list[str],
+                   read_token: str | None = None) -> tuple[dict, dict[str, list[dict]]]:
     """What the broker ran with, and its decisions per trace (decision + reason code, no payloads)."""
     health = httpx.get(f"{broker_url}/health", timeout=30).json()
-    events = httpx.get(f"{broker_url}/api/events", params={"limit": 1000}, timeout=30).json()["events"]
+    events = httpx.get(f"{broker_url}/api/events", params={"limit": 1000}, timeout=30,
+                       headers=read_headers(read_token)).json()["events"]
     info = {"mode": "broker", "broker_real": health.get("real", []), "stubbed": health.get("stubbed", []),
             "modules": health.get("modules", {}), "ignored": health.get("ignored", {})}
     per_trace: dict[str, list[dict]] = {t: [] for t in trace_ids}
@@ -124,7 +131,7 @@ def rep_dir_for(run_dir: Path, scenario_id: str, concurrency: int, rep: int) -> 
 def run_repetition(scenario: Scenario, rep: int, run_dir: Path, *, concurrency: int = 1,
                    llm_backend: str = "fake", llm_base_url: str = "http://localhost:11434",
                    debug_prompts: bool = False, planner_prompt: str | None = None,
-                   mode: str = "direct") -> list[TaskOutcome]:
+                   mode: str = "direct", hold: bool = False) -> list[TaskOutcome]:
     """``planner_prompt`` (v1/v2) overrides the scenario's own planner_prompt;
     both unset means the planner's default version."""
     if not _runnable(scenario, mode):
@@ -134,7 +141,7 @@ def run_repetition(scenario: Scenario, rep: int, run_dir: Path, *, concurrency: 
         agents=[a.model_dump() for a in scenario.agents], run_dir=rep_dir, seed=rep,
         llm_backend=llm_backend, fake_llm=scenario.model_dump(mode="json")["fake_llm"], llm_base_url=llm_base_url,
         debug_prompts=debug_prompts, planner_prompt=planner_prompt or scenario.planner_prompt or "",
-        mode=mode)
+        mode=mode, hold=hold)
     log_dir = rep_dir / "logs"
 
     with Testbed(config) as tb:
@@ -163,12 +170,13 @@ def run_repetition(scenario: Scenario, rep: int, run_dir: Path, *, concurrency: 
             o.ground_truth = gt.json()["records"]
 
         if mode == "broker":
-            info, per_trace = collect_broker(tb.url("broker"), [o.trace_id for o in outcomes])
+            info, per_trace = collect_broker(tb.url("broker"), [o.trace_id for o in outcomes], tb.read_token)
             for o in outcomes:
                 o.broker_info, o.broker_events = info, per_trace[o.trace_id]
             # The broker's view of every agent at the end of the repetition (T, trust state,
             # quarantined, epoch), and its pending approvals; no payloads.
-            state = httpx.get(f"{tb.url('broker')}/api/state", timeout=30).json()
+            state = httpx.get(f"{tb.url('broker')}/api/state", timeout=30,
+                              headers=read_headers(tb.read_token)).json()
             (rep_dir / "broker_state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
 
     for o in outcomes:
@@ -214,7 +222,8 @@ def _admin_call(tb: Testbed, step: dict) -> tuple[int, Any]:
 
 def run_scripted_repetition(scenario: Scenario, rep: int, run_dir: Path, *,
                             llm_backend: str = "fake", llm_base_url: str = "http://localhost:11434",
-                            debug_prompts: bool = False, mode: str = "direct") -> list[TaskOutcome]:
+                            debug_prompts: bool = False, mode: str = "direct",
+                            hold: bool = False) -> list[TaskOutcome]:
     """Run one repetition of a scripted-attack scenario.
 
     Starts victim agents, launches agents/scripted.py as a subprocess, waits
@@ -229,7 +238,7 @@ def run_scripted_repetition(scenario: Scenario, rep: int, run_dir: Path, *,
     config = TestbedConfig(
         agents=[a.model_dump() for a in scenario.agents], run_dir=rep_dir, seed=rep,
         llm_backend=llm_backend, fake_llm=scenario.model_dump(mode="json")["fake_llm"],
-        llm_base_url=llm_base_url, debug_prompts=debug_prompts, mode=mode)
+        llm_base_url=llm_base_url, debug_prompts=debug_prompts, mode=mode, hold=hold)
     log_dir = rep_dir / "logs"
     script_log_path = rep_dir / "script_log.jsonl"
     script_config_path = rep_dir / "script_config.json"
@@ -262,6 +271,9 @@ def run_scripted_repetition(scenario: Scenario, rep: int, run_dir: Path, *,
         status, error, done = "completed", None, 0
         while done < len(steps) and status == "completed":
             if "admin" in steps[done]:
+                if hold:          # demo: the quarantine stays on the dashboard until the operator goes on
+                    s = steps[done]
+                    tb._hold(f"next: admin {s['admin']} of {s['agent']} by {s['by']}; press Enter to make it")
                 code, body = _admin_call(tb, steps[done])
                 _append_jsonl(script_log_path, {"step": done, "admin": steps[done]["admin"],
                                                 "agent": steps[done]["agent"], "by": steps[done]["by"],
@@ -291,9 +303,10 @@ def run_scripted_repetition(scenario: Scenario, rep: int, run_dir: Path, *,
         ground_truth = gt_resp.json()["records"]
         broker_info, broker_events, state = None, [], None
         if mode == "broker":
-            broker_info, per_trace = collect_broker(tb.url("broker"), [trace_id])
+            broker_info, per_trace = collect_broker(tb.url("broker"), [trace_id], tb.read_token)
             broker_events = per_trace[trace_id]
-            state = httpx.get(f"{tb.url('broker')}/api/state", timeout=30).json()
+            state = httpx.get(f"{tb.url('broker')}/api/state", timeout=30,
+                              headers=read_headers(tb.read_token)).json()
             (rep_dir / "broker_state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
 
     script_log = _read_jsonl(script_log_path)

@@ -73,6 +73,9 @@ PENDING_PAYLOAD = {"status": "pending"}
 HITL_TIMEOUT_SECONDS = 600
 DEFAULT_FORWARD_TIMEOUT_S = 60.0
 MAX_EVENTS = 1000
+# Trust history for the dashboard chart: one point per change of an agent's T or state,
+# the last TRUST_HISTORY_POINTS per agent (in memory, bounded).
+TRUST_HISTORY_POINTS = 200
 # V4 (BurstDetector) counts requests per (agent, trace_id). The broker never sees a task end
 # (every request has parent_msg_id = null, and the runner's /task reply does not pass through
 # it), so traces are forgotten when idle, and the number tracked is capped.
@@ -287,6 +290,9 @@ class Broker:
         self._pending_since: dict[str, float] = {}
         self.decided: dict[str, dict] = {}       # approved, rejected or expired items, oldest first
         self._epochs: dict[str, int | None] = {}
+        self._roles: dict[str, str | None] = {}  # verified role per agent (step 2)
+        self._revoked: set[str] = set()          # revoked through /admin/revoke and not restored
+        self._trust_history: dict[str, deque] = {}   # agent -> deque of [ts, T, state]
         self._trace_seen: OrderedDict[str, float] = OrderedDict()   # trace_id -> last seen, oldest first
         self._last_sweep: float | None = None
         self._defence_seen = 0                   # how many DefenceManager.log() events are audited
@@ -397,6 +403,7 @@ class Broker:
 
         with self._lock:
             self._epochs[agent] = ident.epoch
+            self._roles[agent] = ident.role
 
             tr.step = 3                                                 # 3 quarantine
             if M.defence.is_blocked(agent) or M.trust.get(agent).state == "Quarantined":
@@ -462,8 +469,10 @@ class Broker:
         if redacted or reply_cue:                       # affects the responder's next message (S23)
             responder_events = ["REPLY_SANITIZED"] if redacted else []
             with self._lock:
+                before = M.trust.get(env.receiver)
                 M.trust.update(env.receiver, "SANITIZE" if redacted else "ALLOW",
                                M.risk_vector(env.action), bool(reply_cue), events=responder_events)
+                self._note_trust(env.receiver, before)
             if reply_cue:
                 tr.notes.append("REPLY_INJECTION_CUE")
         tr.decision, tr.reason_code = decision, reason
@@ -491,9 +500,23 @@ class Broker:
         before = M.trust.get(agent)
         after = M.trust.update(agent, decision, risk, cue, events=list(tr.events))
         tr.trust = _trust_view(before, after)
+        self._note_trust(agent, before)
         M.defence.record_decision(agent, decision, now)
         tr.decision, tr.reason_code = decision, reason
         return self._refusal(raw, tr.env, decision, reason)
+
+    def _note_trust(self, agent: str, before: Any = None) -> None:
+        """Add a trust-history point for ``agent`` when its T or state changed (called under
+        the lock, after every trust update and release). ``before`` is the state before the
+        change; it starts an agent's history, so its line begins where the agent was."""
+        now = _iso(self._clock())
+        history = self._trust_history.setdefault(agent, deque(maxlen=TRUST_HISTORY_POINTS))
+        if not history and before is not None:
+            history.append([now, round(float(before.T), 4), before.state])
+        ts = self.modules.trust.get(agent)
+        point = [now, round(float(ts.T), 4), ts.state]
+        if not history or history[-1][1:] != point[1:]:
+            history.append(point)
 
     def _track_trace(self, trace_id: str, now: float) -> None:
         """Record that ``trace_id`` is active now, and forget traces that are over (no timer thread).
@@ -600,6 +623,7 @@ class Broker:
             self.decided[approval_id] = item
             while len(self.decided) > MAX_EVENTS:
                 self.decided.pop(next(iter(self.decided)))
+            self.counters[f"approval:{status}"] += 1
             self.events.append({"kind": f"approval_{status}", "ts": item["decided_at"],
                                 "approval_id": approval_id, "msg_id": item["msg_id"],
                                 "trace_id": item["trace_id"], "by": by, **outcome})
@@ -712,6 +736,7 @@ class Broker:
             })
             self.counters["messages"] += 1
             self.counters[f"decision:{reply.decision}"] += 1
+            self.counters[f"reason:{reply.reason_code}"] += 1
             if tr.forwarded:
                 self.counters["forwarded"] += 1
             self._audit_defence_events()
@@ -738,6 +763,8 @@ class Broker:
                      "reason_code": e.get("reason_code"), "denials": e.get("denials")}
             entry_hash = self.modules.append(entry) if entry["kind"] in AUDIT_EVENT_KINDS else None
             self.events.append({**entry, "entry_hash": entry_hash})
+            if entry["kind"] in AUDIT_EVENT_KINDS:
+                self.counters[f"event:{entry['kind']}"] += 1
 
     def refuse_unread(self, reason: str) -> Envelope:
         """A DENY for a request the app would not read (e.g. a body over the size limit).
@@ -771,23 +798,43 @@ class Broker:
         catalog = get_catalog()
         return list(dict.fromkeys([*catalog.roles, *catalog.agents, *sorted(self._epochs)]))
 
+    def _role_and_revoked(self, name: str) -> tuple[str | None, bool]:
+        """The agent's role and whether it is revoked: from the run's registry when real
+        identity is on, else the role verified at step 2 and the /admin/revoke record."""
+        record = self.registry.get(name) if self.registry is not None else None
+        if record is not None:
+            return record.role, record.status == "revoked"
+        return self._roles.get(name), name in self._revoked
+
     def state(self) -> dict:
+        """Counters, agents, pending approvals and trust history: ids, codes and numbers only,
+        never a payload, header, token or proof (the dashboard and the runner read this)."""
         with self._lock:
             agents = []
             for name in self.known_agents():
                 ts = self.modules.trust.get(name)
+                role, revoked = self._role_and_revoked(name)
                 # quarantined: the step-3 answer (V1 block or trust-engine Quarantined, as
                 # DefenceManager.is_blocked says); trust_state: the trust engine's own state.
-                agents.append({"agent": name, "T": round(float(ts.T), 4), "trust_state": ts.state,
+                agents.append({"agent": name, "role": role, "T": round(float(ts.T), 4),
+                               "trust_state": ts.state,
                                "quarantined": bool(self.modules.defence.is_blocked(name)),
-                               "epoch": self._epochs.get(name)})
+                               "epoch": self._epochs.get(name), "revoked": revoked})
+            prefix = "reason:"
             counters = {
                 "messages": self.counters["messages"],
                 "forwarded": self.counters["forwarded"],
                 "decisions": {d: self.counters[f"decision:{d}"] for d in DECISIONS},
                 "pending_approvals": len(self.pending),
+                "reason_codes": {k[len(prefix):]: n for k, n in sorted(self.counters.items())
+                                 if k.startswith(prefix)},
+                "defence": {k: self.counters[f"event:{k}"] for k in AUDIT_EVENT_KINDS},
+                "approvals": {"pending": len(self.pending),
+                              **{k: self.counters[f"approval:{k}"] for k in ("approved", "rejected", "expired")}},
             }
-            return {"counters": counters, "agents": agents, "pending_approvals": list(self.pending.values())}
+            history = {name: [list(p) for p in points] for name, points in self._trust_history.items()}
+            return {"counters": counters, "agents": agents, "pending_approvals": list(self.pending.values()),
+                    "trust_history": history}
 
     def recent_events(self, limit: int = 100) -> list[dict]:
         with self._lock:
@@ -802,8 +849,10 @@ class Broker:
         if agent not in self.known_agents():
             raise UnknownAgentError(f"unknown agent {agent!r}")
         with self._lock:
+            before = self.modules.trust.get(agent)
             self.modules.defence.release(agent, reviewer, ts=self._clock())
             self._audit_defence_events()
+            self._note_trust(agent, before)
             state = self.modules.trust.get(agent)
         return {"agent": agent, "T": float(state.T), "state": state.state, "released_by": reviewer}
 
@@ -829,6 +878,11 @@ class Broker:
                      "reason_code": None, "denials": None}
             entry_hash = self.modules.append(entry)
             self.events.append({**entry, "entry_hash": entry_hash})
+            self.counters[f"event:{kind}"] += 1
+            if kind == "revoke":
+                self._revoked.add(agent)
+            else:
+                self._revoked.discard(agent)
         real = self.modules.is_real(kind)
         record = self.registry.get(agent) if (real and self.registry is not None) else None
         return {"agent": agent, "done": kind, "by": by, "real": real,

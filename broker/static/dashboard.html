@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Broker dashboard</title>
+<link rel="stylesheet" href="/dashboard/dashboard.css">
+<script src="/dashboard/dashboard.js" defer></script>
+</head>
+<body>
+<!-- Read-only view of /api/state and /api/events. The page holds no data itself; the read
+     token is typed in below, kept in memory only and sent as X-Read-Token on each fetch. -->
+<header class="bar">
+  <h1>Zero Trust Message Broker</h1>
+  <p class="conn" id="conn" data-state="none"><span class="mark"></span><span id="conn-text">Not connected</span></p>
+  <p>broker <span class="mono" id="addr"></span></p>
+  <p>last update <span class="mono" id="updated">never</span></p>
+  <form id="token-form" autocomplete="off">
+    <label for="token">read token</label>
+    <input id="token" type="password" spellcheck="false" autocomplete="off">
+    <button type="submit">Connect</button>
+  </form>
+</header>
+
+<main class="grid">
+  <section class="left">
+    <section class="panel" aria-labelledby="h-agents">
+      <h2 id="h-agents">Agents</h2>
+      <table class="agents">
+        <thead><tr>
+          <th>agent</th><th>role</th><th class="num">T</th><th>trust_state</th>
+          <th>quarantined</th><th class="num">epoch</th><th>revoked</th>
+        </tr></thead>
+        <tbody id="agents"></tbody>
+      </table>
+      <p class="empty" id="agents-empty">No agents yet. Connect to a running broker.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="h-counters">
+      <h2 id="h-counters">Counters</h2>
+      <dl class="totals" id="totals"></dl>
+      <table class="counts">
+        <thead><tr><th>reason_code</th><th class="num">decisions</th></tr></thead>
+        <tbody id="reasons"></tbody>
+      </table>
+      <p class="empty" id="reasons-empty">No decisions yet. Start a scenario.</p>
+    </section>
+
+    <section class="panel fill" aria-labelledby="h-pending">
+      <h2 id="h-pending">Pending approvals</h2>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>created</th><th>sender</th><th>receiver</th><th>action</th><th>policy reason</th></tr></thead>
+          <tbody id="pending"></tbody>
+        </table>
+        <p class="empty" id="pending-empty">No requests waiting for approval.</p>
+      </div>
+    </section>
+  </section>
+
+  <section class="main">
+    <section class="panel chart" aria-labelledby="h-trust">
+      <h2 id="h-trust">Trust over time</h2>
+      <svg id="chart" role="img" aria-label="Trust T per agent over time, with the 0.80, 0.60 and 0.40 band lines"></svg>
+      <p class="empty" id="chart-empty">No trust changes yet. Lines appear when the broker scores a message.</p>
+    </section>
+
+    <section class="panel fill" aria-labelledby="h-feed">
+      <h2 id="h-feed">Decisions <span class="note">newest first, last 200</span></h2>
+      <div class="scroll">
+        <table class="feed">
+          <thead><tr>
+            <th>time</th><th>sender</th><th>receiver</th><th>action</th><th>decision</th>
+            <th>reason_code</th><th>forwarded</th><th>redacted fields</th>
+          </tr></thead>
+          <tbody id="feed"></tbody>
+        </table>
+        <p class="empty" id="feed-empty">No decisions yet. Start a scenario.</p>
+      </div>
+    </section>
+  </section>
+</main>
+</body>
+</html>

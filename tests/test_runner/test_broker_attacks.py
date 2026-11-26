@@ -223,7 +223,8 @@ def test_direct_mode_has_no_forwarding_secret(tmp_path):
 def test_a9_end_to_end_and_no_secret_is_written(tmp_path, monkeypatch):
     import runner.processes as processes
     from runner.__main__ import main
-    markers = iter(["ADMIN-MARKER-PLACEHOLDER-0001", "FORWARD-MARKER-PLACEHOLDER-0002"])
+    markers = iter(["ADMIN-MARKER-PLACEHOLDER-0001", "READ-MARKER-PLACEHOLDER-0003",
+                    "FORWARD-MARKER-PLACEHOLDER-0002"])
     monkeypatch.setattr(processes.secrets, "token_urlsafe", lambda n: next(markers))
     results = tmp_path / "results"
     assert main(["--results-dir", str(results), "--mode", "broker", "--llm", "fake", "--reps", "1",
@@ -234,6 +235,7 @@ def test_a9_end_to_end_and_no_secret_is_written(tmp_path, monkeypatch):
     assert s["decisions"][-1] == ["QUARANTINE", "AGENT_QUARANTINED"]
     text = "".join(p.read_text(encoding="utf-8", errors="replace") for p in run.rglob("*") if p.is_file())
     assert "ADMIN-MARKER" not in text and "FORWARD-MARKER" not in text      # never in results or logs
+    assert "READ-MARKER" not in text
     # The attacker's config (part of the text above) has the broker's address and the run's keys
     # folder, and no admin step: the runner makes the release call itself.
     script_cfg = json.loads(next(run.rglob("script_config.json")).read_text(encoding="utf-8"))

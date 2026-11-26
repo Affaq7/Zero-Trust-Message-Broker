@@ -62,6 +62,10 @@ def parse(argv):
                    help="write each planner and research prompt to <rep>/logs/prompts/ (off by default)")
     p.add_argument("--mode", choices=["direct", "broker"],
                    help="MODE for the agent processes (default direct; broker is not implemented yet)")
+    p.add_argument("--hold", action="store_true",
+                   help="broker mode, live demo only (timings include the waits): print the dashboard URL "
+                        "and read token, and wait for Enter before each repetition, before each scripted "
+                        "admin step and before the broker stops")
     p.add_argument("--planner-prompt", choices=["v1", "v2"],
                    help="planner prompt version for every scenario (default: the scenario's own, else the planner default, v2)")
     return p.parse_args(argv)
@@ -191,12 +195,13 @@ def main(argv=None) -> int:
                         outcomes = run_scripted_repetition(
                             s, rep, writer.dir, llm_backend=llm_backend,
                             llm_base_url=llm.base_url, debug_prompts=args.debug_prompts,
-                            mode=mode)
+                            mode=mode, hold=args.hold)
                     else:
                         outcomes = run_repetition(s, rep, writer.dir, concurrency=conc,
                                                   llm_backend=llm_backend, llm_base_url=llm.base_url,
                                                   debug_prompts=args.debug_prompts,
-                                                  planner_prompt=versions.get(s.id), mode=mode)
+                                                  planner_prompt=versions.get(s.id), mode=mode,
+                                                  hold=args.hold)
                     warmup.note_repetition(outcomes)
                     if outcomes and outcomes[0].broker_info:
                         writer.note_broker(outcomes[0].broker_info)
