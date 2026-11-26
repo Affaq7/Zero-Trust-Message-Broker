@@ -1,0 +1,158 @@
+/* Broker dashboard: one screen, dense and calm. Two text sizes (16 px base, 14 px for
+   column heads and notes) plus one heading size. Colour: neutral grey, off-white text,
+   one accent; status colours are used only for decisions, each with its own shape. */
+
+:root {
+  --bg: #1d1f22;
+  --text: #e8e6e1;
+  --muted: #a7aaaf;
+  --rule: #3a3d42;
+  --accent: #6cb6c9;
+  --fresh: #2c3a3e;          /* brief highlight of a changed row */
+  --allow: #7fc489;
+  --deny: #f2756e;
+  --sanitize: #dcc35e;
+  --quarantine: #f39a4c;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", "Consolas", "SF Mono", Menlo, "Liberation Mono", monospace;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4f3f0;
+    --text: #1d1f22;
+    --muted: #54575c;
+    --rule: #c8c6c1;
+    --accent: #1d6a80;
+    --fresh: #dcebef;
+    --allow: #26702f;
+    --deny: #b3261e;
+    --sanitize: #735900;
+    --quarantine: #9a4600;
+    color-scheme: light;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.35 var(--sans);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;          /* the main view never scrolls; long lists scroll inside their panel */
+}
+
+h1, h2 { font-size: 18px; font-weight: 600; margin: 0; }
+p { margin: 0; }
+
+.mono, td, .totals dd, input { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.note, th, label, .totals dt { font-size: 14px; color: var(--muted); font-weight: 400; }
+
+/* --- top bar ------------------------------------------------------------------------- */
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--rule);
+}
+.bar h1 { border-left: 3px solid var(--accent); padding-left: 8px; }
+.bar form { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+input, button {
+  font-size: 16px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  padding: 3px 8px;
+}
+input { width: 18ch; }
+button { font-family: var(--sans); cursor: pointer; }
+input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Connection state: the shape and text change together, so colour is not the only signal. */
+.conn { display: flex; align-items: center; gap: 8px; }
+.conn[data-state="ok"] .mark { background: var(--allow); }
+.conn[data-state="ok"] { color: var(--allow); }
+.conn[data-state="bad-token"] .mark,
+.conn[data-state="offline"] .mark { background: var(--deny); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.conn[data-state="bad-token"], .conn[data-state="offline"] { color: var(--deny); }
+.conn[data-state="none"] .mark { background: transparent; border: 1px solid var(--muted); }
+
+/* --- layout -------------------------------------------------------------------------- */
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(560px, 34%) minmax(0, 1fr);
+  min-height: 0;
+}
+.left, .main { display: flex; flex-direction: column; min-height: 0; }
+.left { border-right: 1px solid var(--rule); }
+
+.panel { padding: 10px 16px 12px; border-bottom: 1px solid var(--rule); }
+.panel h2 { margin-bottom: 6px; }
+.panel.fill { flex: 1; min-height: 0; display: flex; flex-direction: column; border-bottom: 0; }
+.scroll { flex: 1; min-height: 0; overflow: auto; }   /* a narrow screen scrolls the feed sideways */
+
+.chart { height: 38%; min-height: 220px; display: flex; flex-direction: column; }
+.chart svg { flex: 1; width: 100%; min-height: 0; }
+
+.empty { color: var(--muted); padding: 6px 0; }
+[hidden] { display: none !important; }   /* also for the SVG chart */
+
+/* --- tables: thin rules, no stripes, tight rows, sticky head --------------------------- */
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 2px 8px 2px 0; white-space: nowrap; border-bottom: 1px solid var(--rule); }
+th { position: sticky; top: 0; background: var(--bg); }
+td.num, th.num { text-align: right; }
+td.wrap { white-space: normal; overflow-wrap: anywhere; }
+td.word { font-family: var(--sans); }          /* states and yes/no are words, not ids */
+
+/* Below 1500 px wide (e.g. 1280x720) the feed drops the milliseconds to fit. */
+@media (max-width: 1500px) { .ms { display: none; } }
+
+tr.fresh td { animation: settle 500ms ease-out; }
+@keyframes settle { from { background: var(--fresh); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { tr.fresh td { animation: none; } }
+
+.yes { font-weight: 600; }
+
+/* --- decision marks: colour plus shape --------------------------------------------------- */
+
+.mark { display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: 0; }
+.d-ALLOW { color: var(--allow); }
+.d-ALLOW .mark { background: var(--allow); }                                         /* square */
+.d-DENY { color: var(--deny); }
+.d-DENY .mark { background: var(--deny); clip-path: polygon(50% 0, 100% 100%, 0 100%); }   /* triangle */
+.d-SANITIZE { color: var(--sanitize); }
+.d-SANITIZE .mark { background: var(--sanitize); clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); } /* diamond */
+.d-QUARANTINE { color: var(--quarantine); }
+.d-QUARANTINE .mark { background: var(--quarantine);                                 /* cross */
+  clip-path: polygon(0 20%, 20% 0, 50% 30%, 80% 0, 100% 20%, 70% 50%, 100% 80%, 80% 100%, 50% 70%, 20% 100%, 0 80%, 30% 50%); }
+.d-HITL .mark { border: 1px solid var(--text); }                                     /* hollow square */
+.d-event .mark { border: 1px solid var(--quarantine); }                              /* defence event */
+
+/* --- counters ---------------------------------------------------------------------------- */
+
+.totals { display: grid; grid-template-columns: repeat(4, auto); gap: 2px 16px; margin: 0 0 8px; }
+.totals div { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--rule); }
+.totals dd { margin: 0; text-align: right; }
+.counts { margin-top: 4px; }
+
+/* --- trust chart (SVG drawn by dashboard.js) ----------------------------------------------- */
+
+.band { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 4; }
+.axis { stroke: var(--rule); stroke-width: 1; }
+.chart text { fill: var(--muted); font: 14px var(--mono); font-variant-numeric: tabular-nums; }
+.chart text.agent { fill: var(--text); paint-order: stroke; stroke: var(--bg); stroke-width: 6px; }  /* clear of the band lines */
+.line { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+.line.moved { stroke: var(--accent); stroke-width: 2; }           /* an agent whose T has dropped */
+.chart text.agent.moved { fill: var(--accent); }

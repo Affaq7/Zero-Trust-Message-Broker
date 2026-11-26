@@ -418,7 +418,8 @@ def test_n1_passes_with_the_real_risk_and_trust_modules():
 
 def test_health_state_and_events_shapes(missing_group):
     broker, _ = make_broker(Modules.with_real(["risk", missing_group]))
-    client = TestClient(create_app(broker))
+    client = TestClient(create_app(broker, environ={"BROKER_READ_TOKEN": "read-placeholder"}))
+    client.headers["X-Read-Token"] = "read-placeholder"
     client.post("/message", json=raw(n1_request()))
     client.post("/message", content=b"{bad")
 
@@ -427,17 +428,18 @@ def test_health_state_and_events_shapes(missing_group):
     assert health["real"] == ["required_trust", "risk_vector"] and "verify_identity" in health["stubbed"]
     assert missing_group in health["ignored"] and health["modules"]["risk"] == "real"
     assert set(health["modules"]) == set(GROUPS) and set(health["functions"]) == set(FUNCTIONS)
-    assert health["admin"] == "disabled" and health["startup"]["started"] is True
+    assert health["admin"] == "disabled" and health["read"] == "enabled" and health["startup"]["started"] is True
 
     state = client.get("/api/state").json()
-    assert set(state) == {"counters", "agents", "pending_approvals"}
+    assert set(state) == {"counters", "agents", "pending_approvals", "trust_history"}
     c = state["counters"]
     assert c["messages"] == 2 and c["forwarded"] == 1 and c["pending_approvals"] == 0
     assert c["decisions"] == {"ALLOW": 1, "SANITIZE": 0, "HITL": 0, "DENY": 1, "QUARANTINE": 0}
     planner = next(a for a in state["agents"] if a["agent"] == "planner")
-    assert set(planner) == {"agent", "T", "trust_state", "quarantined", "epoch"}
-    assert (planner["T"], planner["trust_state"], planner["quarantined"], planner["epoch"]) == (
-        1.0, "Active", False, 0)
+    assert set(planner) == {"agent", "role", "T", "trust_state", "quarantined", "epoch", "revoked"}
+    assert (planner["T"], planner["trust_state"], planner["quarantined"], planner["epoch"], planner["revoked"]) == (
+        1.0, "Active", False, 0, False)
+    assert c["reason_codes"] == {"MALFORMED_JSON": 1, "POLICY_ALLOW": 1}
 
     events = client.get("/api/events").json()["events"]
     assert [e["reason_code"] for e in events] == ["MALFORMED_JSON", "POLICY_ALLOW"]   # newest first

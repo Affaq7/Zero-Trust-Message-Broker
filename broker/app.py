@@ -3,13 +3,20 @@
     POST /message        an agent's request; always HTTP 200 with a response envelope
                          (a refusal is decision DENY / QUARANTINE / HITL, never a 5xx)
     GET  /health         status, which functions are real or stubs, startup state
-    GET  /api/state      counters, agents (T, state, epoch), pending approvals
+    GET  /api/state      counters, agents (T, state, epoch), pending approvals, trust history
     GET  /api/events     recent decisions and defence events (newest first)
+    GET  /dashboard      read-only dashboard page (static; it holds no data, see below)
     POST /admin/release  {"agent", "reviewer"}; header X-Admin-Token required
     POST /admin/revoke   {"agent", "by"?}: registry revoke (epoch + 1); X-Admin-Token required
     POST /admin/restore  {"agent", "by"?}: registry restore; X-Admin-Token required
     POST /admin/approve  {"approval_id", "by"?}: forward a HITL request (steps 8 and 9)
     POST /admin/reject   {"approval_id", "by"?}: close a HITL request as HITL_REJECTED
+
+/api/state and /api/events need the header X-Read-Token equal to BROKER_READ_TOKEN, or
+X-Admin-Token equal to BROKER_ADMIN_TOKEN (both compared in constant time): 401 when the
+token is missing or wrong, 403 when neither variable is set (fail closed). The dashboard
+page and its CSS and JS need no token; the page asks for the read token and sends it on
+every fetch. They are served with a strict Content-Security-Policy (same origin only).
 
 Admin routes need the header X-Admin-Token equal to BROKER_ADMIN_TOKEN (compared in
 constant time). If BROKER_ADMIN_TOKEN is not set, every admin call is refused (fail
@@ -26,9 +33,10 @@ import hmac
 import json
 import os
 from collections.abc import Mapping
+from pathlib import Path
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 from starlette.concurrency import run_in_threadpool
 
@@ -39,6 +47,21 @@ ADMIN_HEADER = "X-Admin-Token"
 # PAYLOAD_TOO_LARGE without being read further (step 1 also caps the payload at 64 KB).
 MAX_BODY_BYTES = 256 * 1024
 ADMIN_ENV_VAR = "BROKER_ADMIN_TOKEN"
+READ_HEADER = "X-Read-Token"
+READ_ENV_VAR = "BROKER_READ_TOKEN"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+# The dashboard's three files, by URL path: (file, media type).
+DASHBOARD_FILES = {
+    "/dashboard": ("dashboard.html", "text/html; charset=utf-8"),
+    "/dashboard/dashboard.css": ("dashboard.css", "text/css; charset=utf-8"),
+    "/dashboard/dashboard.js": ("dashboard.js", "text/javascript; charset=utf-8"),
+}
+# Same origin only: the page's own CSS and JS, and fetches back to this broker. No inline
+# script or style, no other origin, no frames, no forms.
+DASHBOARD_CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+                 "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+DASHBOARD_HEADERS = {"Content-Security-Policy": DASHBOARD_CSP, "X-Content-Type-Options": "nosniff",
+                     "Referrer-Policy": "no-referrer", "Cache-Control": "no-store"}
 
 
 class ApprovalRequest(BaseModel):
@@ -83,6 +106,7 @@ def create_app(broker: Broker | None = None, environ: Mapping[str, str] = os.env
     if start and not broker.startup["started"]:
         broker.start()                                   # raises BrokerStartupError with a fix
     admin_token = environ.get(ADMIN_ENV_VAR, "")
+    read_token = environ.get(READ_ENV_VAR, "")
     app = FastAPI(title="Zero Trust Message Broker", version="0.1.0")
     app.state.broker = broker
 
@@ -98,6 +122,24 @@ def create_app(broker: Broker | None = None, environ: Mapping[str, str] = os.env
                                outcome="401 missing admin token" if not given else "401 wrong admin token")
             return _error(401, f"missing or wrong {ADMIN_HEADER}")
         return None
+
+    def read_refusal(request: Request) -> JSONResponse | None:
+        """None when the caller may read /api/state and /api/events; otherwise 401 or 403.
+
+        Both comparisons always run (constant time, no early exit). Refusals are not added to
+        the event list, so a dashboard polling with a wrong token cannot flood it, and the
+        given token is never echoed or logged."""
+        if not read_token and not admin_token:
+            return _error(403, f"read routes are disabled: {READ_ENV_VAR} is not set")
+        read_ok = hmac.compare_digest(request.headers.get(READ_HEADER, "").encode("utf-8"),
+                                      read_token.encode("utf-8"))
+        admin_ok = hmac.compare_digest(request.headers.get(ADMIN_HEADER, "").encode("utf-8"),
+                                       admin_token.encode("utf-8"))
+        if (read_ok and read_token) or (admin_ok and admin_token):
+            return None
+        if not read_token:
+            return _error(403, f"read routes are disabled: {READ_ENV_VAR} is not set")
+        return _error(401, f"missing or wrong {READ_HEADER}")
 
     @app.post("/message")
     async def message(request: Request) -> JSONResponse:
@@ -117,15 +159,26 @@ def create_app(broker: Broker | None = None, environ: Mapping[str, str] = os.env
 
     @app.get("/health")
     def health() -> dict:
-        return {**broker.health(), "admin": "enabled" if admin_token else "disabled"}
+        return {**broker.health(), "admin": "enabled" if admin_token else "disabled",
+                "read": "enabled" if read_token else "disabled"}
 
     @app.get("/api/state")
-    def state() -> dict:
-        return broker.state()
+    def state(request: Request):
+        refusal = read_refusal(request)
+        return refusal if refusal is not None else broker.state()
 
     @app.get("/api/events")
-    def events(limit: int = Query(100, ge=1, le=1000)) -> dict:
-        return {"events": broker.recent_events(limit)}
+    def events(request: Request, limit: int = Query(100, ge=1, le=1000)):
+        refusal = read_refusal(request)
+        return refusal if refusal is not None else {"events": broker.recent_events(limit)}
+
+    def dashboard_file(name: str, media_type: str):
+        def serve() -> FileResponse:
+            return FileResponse(STATIC_DIR / name, media_type=media_type, headers=DASHBOARD_HEADERS)
+        return serve
+
+    for path, (name, media_type) in DASHBOARD_FILES.items():
+        app.add_api_route(path, dashboard_file(name, media_type), methods=["GET"], include_in_schema=False)
 
     @app.post("/admin/release")
     async def release(request: Request) -> JSONResponse:
