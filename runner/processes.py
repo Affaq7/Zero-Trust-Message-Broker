@@ -136,6 +136,7 @@ class TestbedConfig:
     planner_prompt: str = ""                 # PLANNER_PROMPT; "" = the planner's default version
     mode: str = "direct"                     # MODE for every agent process (operator-set, never from a message)
     broker_real: list[str] | None = None     # MODE=broker: BROKER_REAL (None = default_broker_real())
+    hold: bool = False                       # MODE=broker demo (--hold): wait for Enter at start, admin steps, stop
 
 
 class Testbed:
@@ -150,6 +151,7 @@ class Testbed:
         # at stop), its admin token (kept in memory, never written) and the BROKER_REAL list.
         self.secrets_dir: Path | None = None
         self.admin_token: str | None = None
+        self.read_token: str | None = None       # X-Read-Token for /api/state and /api/events
         self.forward_token: str | None = None
         self.broker_real: list[str] = []
 
@@ -205,6 +207,9 @@ class Testbed:
             ensure_signing_key(c.python)                  # keys/broker_signing.*, created once
             signing_key = str(SIGNING_KEY)
         self.admin_token = secrets.token_urlsafe(32)
+        # The per-run read token for the dashboard feeds (memory and process env only, like the
+        # admin token); the runner sends it on its own /api/state and /api/events calls.
+        self.read_token = secrets.token_urlsafe(32)
         # The per-run forwarding secret: the broker sends it to agents in X-Broker-Token, and agents
         # in broker mode refuse any request without it (A12). Memory and process env only.
         self.forward_token = secrets.token_urlsafe(32)
@@ -213,7 +218,7 @@ class Testbed:
         broker = Proc("broker", "broker.app:app", free_port(), {
             **base, "BROKER_REAL": ",".join(self.broker_real), "BROKER_ADMIN_TOKEN": self.admin_token,
             "BROKER_KEYS_DIR": str(keys_dir), "BROKER_SIGNING_KEY": signing_key,
-            "BROKER_FORWARD_TOKEN": self.forward_token,
+            "BROKER_FORWARD_TOKEN": self.forward_token, "BROKER_READ_TOKEN": self.read_token,
             "AGENT_URLS": urls, "LOG_DIR": str(logs)}, extra_args=("--workers", "1"))
         self.procs["broker"] = broker
         return {"BROKER_URL": broker.url, "AGENT_KEYS_DIR": str(keys_dir),
@@ -240,7 +245,22 @@ class Testbed:
         except BaseException:
             self.stop()
             raise
+        if "broker" in self.procs:
+            # The URL only: the read token is never put in a URL.
+            print(f"broker dashboard: {self.procs['broker'].url}/dashboard", flush=True)
+            if self.config.hold:
+                self._hold("the read token for the dashboard: " + (self.read_token or "")
+                           + "\nopen the dashboard, enter the token, then press Enter to run the scenario")
         return self
+
+    @staticmethod
+    def _hold(message: str) -> None:
+        """--hold (demo only): print and wait for Enter on the operator's own terminal."""
+        print(message, flush=True)
+        try:
+            input()
+        except EOFError:
+            pass
 
     def _wait_healthy(self, p: Proc) -> None:
         deadline = time.monotonic() + STARTUP_TIMEOUT_S
@@ -283,7 +303,9 @@ class Testbed:
     def __enter__(self) -> "Testbed":
         return self.start()
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, exc_type, *exc) -> None:
+        if exc_type is None and self.config.hold and "broker" in self.procs:
+            self._hold("scenario finished; the broker stays up for the dashboard. Press Enter to stop")
         self.stop()
 
     def url(self, name: str) -> str:

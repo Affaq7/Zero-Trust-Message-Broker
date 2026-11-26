@@ -244,14 +244,16 @@ gives each repetition fresh processes, as in direct mode, plus a broker:
 1. it issues a new set of credential files with `scripts/issue_credentials.py`
    into a temporary folder outside the repo (deleted when the repetition
    ends); the repo's `keys/` folder is never used for them;
-2. it makes a new admin token for the run (kept in memory, never written);
+2. it makes a new admin token and a new read token for the run (kept in
+   memory and the broker's process environment, never written);
 3. if the audit module is real and `keys/broker_signing.pub` does not exist,
    it creates the broker signing key once with
    `python -m broker.audit.signing_key create` (which never overwrites);
 4. it starts the broker as its own process (`uvicorn broker.app:app`, one
    worker, because the broker keeps its state in memory) and the agents with
-   `MODE=broker`, waits for every `/health`, runs the scenario, then reads the
-   broker's `/api/events` and `/api/state` and stops everything.
+   `MODE=broker`, waits for every `/health`, prints the dashboard URL, runs the
+   scenario, then reads the broker's `/api/events` and `/api/state` with the
+   read token and stops everything.
 
 The decision and reason code of every message go to `results.csv`
 (`broker_decision`) and `broker_decisions.jsonl`; the broker's end state per
@@ -301,6 +303,35 @@ steps 8 and 9, with the reply check; `POST /admin/reject` closes it as
 already had its HITL reply, so the approved result is recorded on the item,
 in `/api/events` and in the audit log.
 
+**Dashboard and read token (F4).** `GET /dashboard` is a read-only page
+(`broker/static/`: one HTML, one CSS and one JS file; no framework, no build
+step, nothing loaded from another origin, so it works offline). The page holds
+no data and needs no token to load; it asks for the read token, keeps it in
+memory only (never in the URL or browser storage) and sends it as
+`X-Read-Token` on each poll of `/api/state` and `/api/events` (every 1.5 s,
+paused while the tab is hidden). Those two routes need `X-Read-Token` equal to
+`BROKER_READ_TOKEN`, or `X-Admin-Token` equal to `BROKER_ADMIN_TOKEN` (both
+compared in constant time): 401 for a missing or wrong token, 403 when no
+token is configured. Refusals are not added to the event list. The page and
+its files are served with `Content-Security-Policy: default-src 'none';
+script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none';
+form-action 'none'; frame-ancestors 'none'`. Every string from the broker is
+written with `textContent`. It shows ids, reason codes, numbers and the NAMES
+of redacted fields, never a payload value, token or proof. There are no
+approve or reject buttons: approvals stay on `/admin/*` with the admin token.
+
+`/api/state` now also has, per agent, `role` and `revoked`; in `counters`,
+`reason_codes` (decisions per reason code), `defence` (quarantine, release,
+revoke, restore) and `approvals` (pending, approved, rejected, expired); and
+`trust_history`: per agent, `[ts, T, trust_state]` at each change, the last
+200 points.
+
+Live demo: `python -m runner --mode broker --llm fake --reps 1 --scenario A9 --hold`.
+`--hold` prints the dashboard URL and the run's read token, waits for Enter
+before the scenario, before each scripted admin step (for A9, the release of
+research by kissa) and before the broker stops. Its timings include the waits,
+so use it for demos only. Screenshots: `docs/dashboard/`.
+
 **Environment variables.**
 
 | Variable | Set on | Meaning |
@@ -308,7 +339,8 @@ in `/api/events` and in the audit log.
 | `BROKER_URL` | agents | the broker's base URL; every request goes there in broker mode |
 | `AGENT_CREDENTIALS`, `AGENT_KEYS_DIR` | agents | which credential file the agent uses, and the folder it is in |
 | `BROKER_REAL` | broker | modules that run for real, for example `identity,policy,validate,risk,trust,burst,defence,audit,content` (the runner's default); the rest are stubs (`/health` lists each function) |
-| `BROKER_ADMIN_TOKEN` | broker | required in `X-Admin-Token` for `/admin/*`; if it is not set, every admin call is refused |
+| `BROKER_ADMIN_TOKEN` | broker | required in `X-Admin-Token` for `/admin/*`; if it is not set, every admin call is refused. Also accepted on `/api/state` and `/api/events` |
+| `BROKER_READ_TOKEN` | broker | required in `X-Read-Token` for `/api/state` and `/api/events` (the dashboard feeds); if neither it nor the admin token is set, both routes answer 403 |
 | `BROKER_KEYS_DIR` | broker | where the broker reads the agents' public keys (default `keys/`) |
 | `BROKER_SIGNING_KEY` | broker | the audit signing key file (default `keys/broker_signing.key`) |
 | `BROKER_FORWARD_TOKEN` | broker, agents | the run's forwarding secret, made by the runner in memory: the broker sends it in `X-Broker-Token`, agents in broker mode refuse requests without it |
