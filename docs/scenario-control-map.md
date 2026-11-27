@@ -29,22 +29,32 @@ whether it runs in FYP-I. Every reason code is defined in
 | A9 | ASI10 Rogue Agents | step 3 quarantine after 5 denials in 60 s (A3, rule V1) | QUARANTINE | `AGENT_QUARANTINED` | yes |
 | A10 | ASI03 Identity and Privilege Abuse | step 2 identity, epoch check after `revoke()` (K1, K2, A3) | DENY | `STALE_EPOCH` | yes |
 | A11 | ASI07 Insecure Inter-Agent Communication | transport: HTTPS only, no plain HTTP port (A5 part two) | none | none | no |
-| A12 | ASI07 Insecure Inter-Agent Communication | network isolation, agents reachable only through the broker | none | none | no |
+| A12 | ASI07 Insecure Inter-Agent Communication | the receiving agent's wrapper refuses a request without the broker's forwarding token (HTTP 401); the same request through the broker is allowed. Full network isolation is FYP-II | none | none | yes |
 | A13 | ASI03 Identity and Privilege Abuse (with ASI02); ATLAS AML.T0053 AI Agent Tool Invocation | step 4 policy, role gate (K3) | DENY | `ROLE_NOT_ALLOWED` | yes |
 | A14 | ASI03 Identity and Privilege Abuse; ATLAS AML.T0012 Valid Accounts | step 2 identity, proof key binding (K2) | DENY | `PROOF_KEY_MISMATCH` | yes |
 
-16 of the 19 scenarios run in FYP-I, the same list as the demo in the division
-plan. The three that do not:
+17 of the 19 scenarios run in FYP-I. The two that do not:
 
 - **A3** needs the live model to follow the poisoned document, and llama3:8b did
   not do so in 10 of 10 runs (baseline report section 3b), so the broker has
   nothing to block. The approval queue is shown with a scripted external email.
 - **A11** needs encrypted transport (Amna's A5 part two, a stretch task). If it is
   finished, A11 runs and the check is "plain HTTP refused".
-- **A12** needs network isolation with Docker, planned for FYP-II.
 
-For A11 and A12 the broker gives no decision: the attack is stopped before a
-message reaches step 1, so "none" is the single expected outcome.
+For A11 and A12 the broker gives no decision, so "none" is the single expected
+outcome. A12 runs in broker mode since 26 Nov: an agent refuses any request that
+did not come through the broker (HTTP 401, no forwarding token), and the same
+request through the broker is ALLOW (Amna's run matched). Once A5 is wired, the
+check is the broker's signature instead of the shared token. Network isolation
+(agents unreachable except through the broker) is still FYP-II.
+
+Two later routes, so the map stays complete:
+
+- **A9** can also be reached through the trust score: when an agent's T falls
+  below 0.40 the audit log gets `TRUST_QUARANTINED` once, and from then on its
+  messages get QUARANTINE with `AGENT_QUARANTINED` at step 3 (Amna, PR #24).
+- **A2**: once a responder is quarantined, a request to it is DENY with
+  `RECEIVER_QUARANTINED` and nothing is forwarded (Afaq, being added).
 
 ## 2. Open wording settled
 
@@ -84,8 +94,10 @@ N1 to N4 and P1 stay as they are. A11 and A12 keep their text.
 
 ## 4. For the report (Appendix B, Table 11, in K-R3)
 
-Table 11 differs from this map in four rows: A3 (now HITL), A6 and A10 (DENY
-with a code instead of "REJECT"), and A9 (the code). Add the reason code
+Table 11 differs from this map in five rows: A3 (now HITL), A6 and A10 (DENY
+with a code instead of "REJECT"), A9 (the code), and A12 ("Blocked by the
+network" becomes "refused by the receiving agent (HTTP 401); full network
+isolation is FYP-II"). Add the reason code
 column, and replace the closing sentence "The expected decisions for A3 and A4
 may still change" with a pointer to this map.
 

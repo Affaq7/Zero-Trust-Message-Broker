@@ -319,6 +319,8 @@ only narrow the catalog, never widen it.
 | `INDIVIDUAL_DATA_REQUEST` | event | V5 | lowers T (severity 1.0), audit log; flag from F3 `minimum_necessary` | `broker/trust/trust.py` (A2) |
 | `REPLY_SANITIZED` | decision | step 9 | SANITIZE: the reply is cut to what the request asked for, and this is the `reason_code` of that reply (A2) | `broker.content` (F3) |
 | `REPLY_SANITIZED` | event | A2 scenario | lowers the responder's T (severity 0.5), audit log; from F3 | `broker/trust/trust.py` (A2) |
+| `TRUST_QUARANTINED` | event | trust score | audit event only (kind `quarantine`), written once when an agent's T falls below 0.40; from then on its messages get QUARANTINE with `AGENT_QUARANTINED` at step 3 | `broker/defence/quarantine.py` (A3, in PR #24) |
+| `RECEIVER_QUARANTINED` | decision | step 3 | DENY when the receiver is quarantined; nothing is forwarded, and it is not counted against the sender | `broker/pipeline.py` (Afaq, being added) |
 
 A decision code is the `reason_code` of the broker's reply. An event code never
 decides on its own: it is passed to `TrustEngine.update(events=...)` and written
@@ -326,6 +328,19 @@ to the audit log. `REPLY_SANITIZED` is the one code that is both: F3 sets it as
 the SANITIZE decision's `reason_code`, and the same sanitising is passed to the
 trust engine as an event (agreed by Amna, 26 Nov). V2 adds no code: it uses
 `ROLE_NOT_ALLOWED` and `DELEGATION_EXCEEDS_DELEGATOR` (step 4), counted once.
+
+### Refusals by the receiving agent's wrapper (A5 request signing; HTTP 403, not broker decisions)
+
+These are not decisions of the broker. The receiving agent's wrapper checks the
+broker's signature on a forwarded request and refuses it with HTTP 403 before the
+agent sees it (Amna's A5, agreed with Afaq). The time window is the same as
+`STALE_MESSAGE` in step 1.
+
+| Code | Refused when | Module |
+|---|---|---|
+| `BROKER_SIGNATURE_INVALID` | the signature is bad, missing or malformed, or any signed field or body byte changed | agent wrapper (A5) |
+| `BROKER_SIGNATURE_STALE` | the signed timestamp is older than 60 s or more than 5 s ahead | agent wrapper (A5) |
+| `BROKER_SIGNATURE_REPLAYED` | the receiving agent already accepted this `msg_id` | agent wrapper (A5) |
 
 ### Expected identity codes for the scenarios (input to K-R2)
 

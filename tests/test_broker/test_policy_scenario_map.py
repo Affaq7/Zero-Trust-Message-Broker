@@ -59,8 +59,9 @@ def test_one_decision_and_a_code_from_the_spec(scenario):
     assert row["threat"] and row["control"]
 
 
-def test_sixteen_scenarios_run_in_fyp1():
-    assert {s for s, r in ROWS.items() if r["fyp1"] == "no"} == {"A3", "A11", "A12"}
+def test_seventeen_scenarios_run_in_fyp1():
+    """A12 runs in broker mode since 26 Nov (refused by the receiving agent, HTTP 401)."""
+    assert {s for s, r in ROWS.items() if r["fyp1"] == "no"} == {"A3", "A11"}
 
 
 def test_attack_rows_name_an_owasp_agentic_class():
