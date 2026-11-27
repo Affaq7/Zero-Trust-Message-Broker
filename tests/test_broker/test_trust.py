@@ -102,7 +102,7 @@ def test_clean_message_recovers_ca():
 
 def test_window_forgets_after_twenty():
     e = TrustEngine()
-    e.update("a", "HITL", LOW, False)
+    e.update("a", "SANITIZE", LOW, False)
     for _ in range(19):
         e.update("a", "ALLOW", LOW, False)
     assert e.get("a").T < 1.0
@@ -112,10 +112,14 @@ def test_window_forgets_after_twenty():
 
 # --- counting (A-R2 and the five decisions) ----------------------------------
 
-def test_hitl_and_sanitize_lower_ba_but_are_not_violations():
-    for d in ("HITL", "SANITIZE"):
-        st = TrustEngine().update("a", d, LOW, False)
-        assert st.T == pytest.approx(expected_T(19 / 20, 1.0))
+def test_sanitize_lowers_ba_but_is_not_a_violation():
+    st = TrustEngine().update("a", "SANITIZE", LOW, False)
+    assert st.T == pytest.approx(expected_T(19 / 20, 1.0))
+
+
+def test_hitl_is_neutral():
+    st = TrustEngine().update("a", "HITL", LOW, False)
+    assert st.T == pytest.approx(1.0)
 
 
 def test_reply_sanitized_is_a_half_violation():

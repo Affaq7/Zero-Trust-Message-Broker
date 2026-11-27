@@ -66,8 +66,11 @@ Normal data from run `20261125T193722Z`:
 | 1.0 | 0.05 | 1.0000 | yes | 0.7032 | 50 | 41 | 1 | 5 | 13 | yes |
 | 1.0 | 0.1 | 1.0000 | yes | 0.7288 | 37 | 8 | 1 | 5 | 13 | yes |
 
-With the synthetic normal agent the table is the same except "normal lowest T"
-is 0.9750 in every row (the one HITL); it stays Active for every value.
+With the synthetic normal agent the table is the same. (Before HITL became
+neutral for trust on 27 Nov, its one HITL gave "normal lowest T" 0.9750 in every
+row; it stayed Active for every value then too. Re-checked after the change: the
+grid, the chosen lambda 0.5 and eta 0.1, and both figures are unchanged, with the
+synthetic agent and with fresh N1 to N4 direct-mode runs, fake model.)
 
 ![Attacker: T by message for each lambda (eta 0.1)](../figures/trust_attacker.svg)
 

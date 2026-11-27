@@ -6,7 +6,10 @@ Keeps one trust score T per agent, in memory, and moves it with behaviour.
 
 Ia  identity confidence: 1, because identity is verified (step 2) before this
     step runs; an unverified message never reaches the engine.
-Ba  behaviour: share of ALLOW in the agent's last 20 decisions.
+Ba  behaviour: share of ALLOW in the agent's last 20 decided messages. HITL
+    (waiting for a human) is neutral: it does not enter the window, because the
+    human's answer is still to come (the pipeline records it later: approved as
+    ALLOW, rejected as DENY, a timeout not at all; decided by Amna, 27 Nov).
 Ca  context compliance: Ca x e^(-lambda x R) after a violation, Ca + eta x (1 - Ca)
     after a clean message (plan 4.4, applied to Ca so the formula stays the one
     source of T; decided by Amna, 25 Nov).
@@ -122,7 +125,9 @@ class TrustEngine:
         """Record one decision for `agent` and return its new trust state.
 
         decision       the broker's decision for this message (ALLOW, SANITIZE,
-                       HITL, DENY, QUARANTINE). Only ALLOW counts as clean in Ba.
+                       HITL, DENY, QUARANTINE). Only ALLOW counts as clean in Ba;
+                       HITL is neutral (not added to Ba), but a violation on the
+                       same message (injection cue, events) still lowers Ca.
         risk           the action's risk vector (A1). Not used in the score for
                        now; its compound high flag is kept in the history.
         injection_cue  a cue from K4 (request) or F3 (reply).
@@ -149,7 +154,8 @@ class TrustEngine:
         sev = self.s["severity"]
         severity = max((sev[v] for v in violations), default=0.0)   # count once
 
-        a.window.append(decision == "ALLOW")
+        if decision != "HITL":                      # HITL: neutral until a human decides
+            a.window.append(decision == "ALLOW")
         if severity > 0:
             a.Ca *= math.exp(-self.s["lambda"] * severity)
         elif decision == "ALLOW":
