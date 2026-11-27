@@ -7,6 +7,9 @@ gets decision QUARANTINE with reason AGENT_QUARANTINED, and nothing is
 forwarded. The trigger itself is logged as DENIAL_RATE_EXCEEDED.
 
 An agent is also blocked when the trust engine (A2) has it in Quarantined.
+That quarantine is logged too, once, when the score enters Quarantined, with
+reason TRUST_QUARANTINED (the trust engine's on_quarantine hook; it covers a
+responder whose replies keep being cut, which never sends a request itself).
 release() is the only way out: it needs an allowed reviewer, clears the V1
 block, calls TrustEngine.release (restart in Restricted at 0.50) and logs who
 released it and when.
@@ -32,6 +35,7 @@ SETTINGS_PATH = Path(__file__).with_name("defence_settings.yaml")
 
 AGENT_QUARANTINED = "AGENT_QUARANTINED"
 DENIAL_RATE_EXCEEDED = "DENIAL_RATE_EXCEEDED"
+TRUST_QUARANTINED = "TRUST_QUARANTINED"
 
 
 def load_settings(path: Path = SETTINGS_PATH) -> dict:
@@ -61,12 +65,17 @@ class DefenceManager:
         self._denials: dict[str, deque] = {}
         self._blocked: set[str] = set()
         self._log: list[dict] = []
+        hook = getattr(trust, "on_quarantine", None)
+        if callable(hook):                      # the real engine; a stub may not have it
+            hook(self._trust_quarantined)
 
     # --- interface (section 7) ---------------------------------------------
 
     def record_decision(self, agent: str, decision: str, ts: float) -> None:
-        """Record one decision for a verified agent. Only DENY counts for V1."""
-        if not agent or decision != "DENY" or agent in self._blocked:
+        """Record one decision for a verified agent. Only DENY counts for V1.
+        An agent that is already quarantined (by V1 or by its trust score) is not
+        counted, so one quarantine gets one log line."""
+        if not agent or decision != "DENY" or self.is_blocked(agent):
             return
         window = self._denials.setdefault(agent, deque())
         window.append(ts)
@@ -103,6 +112,15 @@ class DefenceManager:
         self._log.append({"kind": "release", "agent": agent, "by": reviewer, "ts": ts})
 
     # --- extras ------------------------------------------------------------
+
+    def _trust_quarantined(self, agent: str) -> None:
+        """The trust engine moved `agent` into Quarantined: log it once. An agent
+        already blocked by V1 has its quarantine line already. The engine has no
+        clock, so ts is None; the pipeline stamps the time when it audits the line."""
+        if not agent or agent in self._blocked:
+            return
+        self._log.append({"kind": "quarantine", "agent": agent, "by": "broker",
+                          "reason_code": TRUST_QUARANTINED, "ts": None, "denials": None})
 
     def check(self, agent: str) -> tuple[str, str] | None:
         """Step 3: ("QUARANTINE", "AGENT_QUARANTINED") for a blocked agent, else None."""

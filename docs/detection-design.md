@@ -27,6 +27,10 @@ audit log, never into an envelope, a token or the message log.
 
 **What each rule does (Amna, 25 Nov; plan section 8, item 3):**
 - V1 is the only rule that quarantines straight away.
+- An agent is also quarantined when its trust score falls below the Restricted
+  band (T < 0.40, A2). The defence manager logs that once, with reason
+  `TRUST_QUARANTINED`, like a V1 quarantine. It mostly covers a responder whose
+  replies keep being cut (about 13 cut replies in a row with the current settings).
 - V2, V3 and V5 lower T through the decay rule (plan 4.4). Their severities are set in A2.
 - V4 moves the agent to Suspicious.
 - **Count once (plan 4.4):** a DENY counts once towards V1 and once as a T drop.
@@ -108,6 +112,7 @@ existing code. If the two lists ever differ, section 8 is the reference.
 |---|---|---|---|
 | `AGENT_QUARANTINED` | step 3, already listed | QUARANTINE | `broker/defence/quarantine.py` (A3) |
 | `DENIAL_RATE_EXCEEDED` | V1 | QUARANTINE (the denial that crosses 5 in 60 s) | `broker/defence/quarantine.py` (A3) |
+| `TRUST_QUARANTINED` | trust score below 0.40 (A2) | none on its own; the quarantine event in the audit log, then QUARANTINE / `AGENT_QUARANTINED` at step 3 (to be added to section 8 by Kissa) | `broker/defence/quarantine.py` (A3) |
 | (none new) | V2 | DENY with Kissa's `ROLE_NOT_ALLOWED` or `DELEGATION_EXCEEDS_DELEGATOR` (count once) | `broker/policy/engine.py` (K3) |
 | `INJECTION_CUE` | V3 | none on its own; lowers T, audit log | `broker/trust/trust.py` (A2) |
 | `BURST_DETECTED` | V4 | none on its own; state Suspicious, audit log | `broker/trust/rules.py` (A2) |
