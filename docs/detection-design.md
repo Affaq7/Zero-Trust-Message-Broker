@@ -40,8 +40,12 @@ would have to sit above P1's rate. Per task, the code caps the planner at 5
 actions (planner prompt v2) and research at 4 steps; one `planner.request` relay
 can add another 5 planner actions to the same task. So 10 is the most a normal
 agent can send in one task, and V4 fires above that. Limit: `trace_id` is set by
-the sender, so an attacker can start a new trace for every message and V4 will
-not see it; V1 and the other rules still apply.
+the sender, so an attacker (or a hijacked agent) can start a new trace for every
+message and V4 will not see it. V1, the policy step and the trust score still
+apply to every message, whatever its `trace_id`. Possible fixes, for FYP-II: count
+how many new traces one agent starts per minute (a normal agent only starts one
+when it is given a task), or let the broker hand out trace ids so that an agent
+cannot pick its own.
 
 ## 2. Moved to FYP-II
 
@@ -92,9 +96,18 @@ live-model runs or more varied tasks are needed for realistic variety.
    mailer. A2 is handled by the reply sanitiser (SANITIZE) and A4 by the recipient
    check (DENY, `RECIPIENT_NOT_APPROVED`, Afaq's code). Both hits are sent to A2.
 7. **V4's figures.** The limit of 10 rests on the planner cap (5 actions), the
-   research cap (4 steps) and `events.jsonl` keeping no payloads. Afaq checks all
-   three in the code by 26 Nov noon; cross-check run: his P1 run 20261108T194721Z
-   (3 repetitions).
+   research cap (4 steps) and `events.jsonl` keeping no payloads.
+   **Resolved (Afaq, cross-check in the code):** the planner allows 5 actions
+   with the default prompt v2 (`V2_MAX_STEPS`) and 4 with prompt v1; research
+   allows 4 actions in total (`DEFAULT_MAX_STEPS`), with at most 1 extra action.
+   The operator can change both with `PLANNER_MAX_STEPS` and `RESEARCH_MAX_STEPS`.
+   `events.jsonl` holds only ids, time, direction, message type, sender,
+   receiver, action, resource and decision, never a payload. In his P1 run
+   20261108T194721Z (3 repetitions) no agent sent more than 3 requests in one
+   trace (the planner in N4 and P1), so "more than 10" leaves a clear margin over
+   normal traffic and over both caps. That run used the fake model; a live-model
+   run should be checked the same way before the numbers are final. The
+   `trace_id` caveat is in section 1.
 
 No conflict found with: the A9 numbers (5 in 60 s), labels and trust scores
 staying broker-side, or the catalog roles.
