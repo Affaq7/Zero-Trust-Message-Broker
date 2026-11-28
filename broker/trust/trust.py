@@ -18,7 +18,8 @@ V1 (5 denials in 60 s) is not here: it belongs to A3 (broker/defence/quarantine.
 Pure Python: no network, no model calls, deterministic for the same calls.
 Settings and starting values: trust_settings.yaml (PROVISIONAL, A-R1).
 Interface fixed on 25 Nov (context file, section 7), plus one optional
-argument on update(): `events`.
+argument on update(): `events`, and one optional extra: on_quarantine(), which
+lets the defence manager (A3) log a quarantine caused by the score itself.
 """
 
 import math
@@ -26,7 +27,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Callable, Iterable, Literal
 
 import yaml
 from pydantic import BaseModel
@@ -110,6 +111,7 @@ class TrustEngine:
     def __init__(self, settings: dict | None = None):
         self.s = settings if settings is not None else default_settings()
         self._agents: dict[str, _Agent] = {}
+        self._quarantine_listeners: list[Callable[[str], None]] = []
 
     # --- interface (section 7) ---------------------------------------------
 
@@ -162,6 +164,7 @@ class TrustEngine:
         a.state = self._next_state(a)
 
         T_after = self._T(a)
+        entered_quarantine = state_before != "Quarantined" and a.state == "Quarantined"
         a.history.append({
             "seq": len(a.history) + 1, "event": "update", "decision": decision,
             "violations": sorted(set(violations)), "events": list(events),
@@ -169,6 +172,9 @@ class TrustEngine:
             "T_before": T_before, "T_after": T_after,
             "state_before": state_before, "state_after": a.state,
         })
+        if entered_quarantine:
+            for listener in list(self._quarantine_listeners):
+                listener(agent)
         return TrustState(agent=agent, T=T_after, state=a.state)
 
     def release(self, agent: str, reviewer: str) -> TrustState:
@@ -196,6 +202,14 @@ class TrustEngine:
         return TrustState(agent=agent, T=T_after, state=a.state)
 
     # --- extras ------------------------------------------------------------
+
+    def on_quarantine(self, listener: Callable[[str], None]) -> None:
+        """Call `listener(agent)` once each time an update() moves an agent into
+        Quarantined (not again while it stays there; again after a release).
+        The defence manager (A3) uses it to log the quarantine (TRUST_QUARANTINED)."""
+        if not callable(listener):
+            raise ValueError("listener must be callable")
+        self._quarantine_listeners.append(listener)
 
     def history(self, agent: str) -> list[dict]:
         """Every score change for `agent`, oldest first (plan 4.4). A copy."""

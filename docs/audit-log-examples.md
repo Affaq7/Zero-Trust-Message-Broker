@@ -99,6 +99,15 @@ Not a message decision: the fifth DENY within 60 s from the same verified agent.
 {"agent":"research","by":"broker","denials":[1764097204.0,1764097205.0,1764097206.0,1764097207.0,1764097208.0],"entry_hash":"096a75df45ffa628f8ca526dc07dc4dae7f3c0327baeba308ec990bb65c02b00","kind":"quarantine","prev_hash":"b763859ffeda24b5d7d4f4a5859bb1117751320ec0cd08661597072f7c757b0b","reason_code":"DENIAL_RATE_EXCEEDED","seq":5,"signature":"xeYlWPRn2NHcv_JY6udCmBb0XC5YlZGfjirhHBA1Ix8cfitMv73hTrzFEyM4pIINOfl2oR5z6pe9eLI0cgboDA","ts":"2026-11-25T19:00:08.000+00:00"}
 ```
 
+**Quarantine by trust score.** When an agent's trust score falls below 0.40
+(A2), the defence manager logs a quarantine event too, once, with reason
+`TRUST_QUARANTINED` and no `denials`. The pipeline stamps `ts` when it audits the
+line. The entry passed to `append()` looks like this (not signed here):
+
+```
+{"kind": "quarantine", "ts": "<broker time>", "agent": "database", "by": "broker", "reason_code": "TRUST_QUARANTINED", "denials": null}
+```
+
 ## 6. QUARANTINE (A9)
 
 The next message from the quarantined agent. Step 3 stops it before policy, so the line has no risk vector; nothing is forwarded. T after five DENY is 0.5996 (Restricted); the block comes from V1, not from T.
