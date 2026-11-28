@@ -59,8 +59,9 @@ def test_one_decision_and_a_code_from_the_spec(scenario):
     assert row["threat"] and row["control"]
 
 
-def test_sixteen_scenarios_run_in_fyp1():
-    assert {s for s, r in ROWS.items() if r["fyp1"] == "no"} == {"A3", "A11", "A12"}
+def test_seventeen_scenarios_run_in_fyp1():
+    """A12 runs in broker mode since 26 Nov (refused by the receiving agent, HTTP 401)."""
+    assert {s for s, r in ROWS.items() if r["fyp1"] == "no"} == {"A3", "A11"}
 
 
 def test_attack_rows_name_an_owasp_agentic_class():
@@ -140,25 +141,44 @@ def test_identity_rows_match_the_verifier(setup, scenario):
 
 # --- section 6: TC-001 to TC-007 point at tests that exist ---------------------------------------
 
-def tc_rows() -> dict[str, list[str]]:
+KISSA_TCS = [f"TC-00{i}" for i in range(1, 8)]
+AMNA_TCS = ["TC-008", "TC-010", "TC-011", "TC-012"]
+PENDING = ("not merged yet", "no PR yet")
+
+
+def tc_rows() -> dict[str, tuple[list[tuple[str, str]], str]]:
+    """TC id -> ([(path, test name)], note) from the table in section 6."""
     section = MAP.split("## 6. Test cases", 1)[1]
     rows = {}
     for line in section.splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) == 4 and re.fullmatch(r"TC-00[1-7]", cells[0]):
-            rows[cells[0]] = re.findall(r"`(test_\w+\.py)::(test_\w+)`", cells[2])
+        if len(cells) == 4 and re.fullmatch(r"TC-0\d\d", cells[0]):
+            refs = re.findall(r"`((?:tests/\w+/)?test_\w+\.py)::(test_\w+)`", cells[2])
+            rows[cells[0]] = (refs, cells[3])
     return rows
 
 
-def test_tc_001_to_007_are_all_mapped():
+def test_kissa_and_amna_test_cases_are_all_mapped():
     rows = tc_rows()
-    assert sorted(rows) == [f"TC-00{i}" for i in range(1, 8)]
-    assert all(rows.values()), "every TC names at least one test"
+    assert sorted(rows) == sorted(KISSA_TCS + AMNA_TCS)
+    assert all(refs for refs, _ in rows.values()), "every TC names at least one test"
 
 
-@pytest.mark.parametrize("tc", [f"TC-00{i}" for i in range(1, 8)])
+@pytest.mark.parametrize("tc", KISSA_TCS + AMNA_TCS)
 def test_every_named_test_exists(tc):
-    for filename, name in tc_rows()[tc]:
-        path = REPO_ROOT / "tests" / "test_broker" / filename
-        assert path.exists(), f"{tc}: {filename} does not exist"
-        assert re.search(rf"^def {name}\(", path.read_text(encoding="utf-8"), re.M), f"{tc}: {filename}::{name} not found"
+    """A file may be missing only while the row's note says it is not merged yet."""
+    refs, note = tc_rows()[tc]
+    for ref, name in refs:
+        path = REPO_ROOT / ref if ref.startswith("tests/") else REPO_ROOT / "tests" / "test_broker" / ref
+        if not path.exists():
+            assert path.name in note and any(p in note for p in PENDING), f"{tc}: {ref} does not exist"
+            continue
+        assert re.search(rf"^def {name}\(", path.read_text(encoding="utf-8"), re.M), f"{tc}: {ref}::{name} not found"
+
+
+def test_kissa_rows_name_only_merged_tests():
+    """Kissa's own rows never point at a file that is not on the branch."""
+    for tc in KISSA_TCS:
+        refs, _ = tc_rows()[tc]
+        for ref, _name in refs:
+            assert (REPO_ROOT / "tests" / "test_broker" / ref).exists(), f"{tc}: {ref}"
