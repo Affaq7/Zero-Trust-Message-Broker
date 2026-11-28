@@ -33,6 +33,12 @@ audit log, never into an envelope, a token or the message log.
   replies keep being cut (about 13 cut replies in a row with the current settings).
 - V2, V3 and V5 lower T through the decay rule (plan 4.4). Their severities are set in A2.
 - V4 moves the agent to Suspicious.
+- **HITL is neutral for trust (Amna, 27 Nov):** a request waiting for a human
+  does not count as clean or as a violation. When the human answers, an
+  approval counts as ALLOW, a rejection as DENY (for T and for V1), and a
+  timeout not at all (nobody looked at it). A violation on the HITL message
+  itself (an injection cue, V5) still lowers T. The approval and rejection
+  updates are made by the pipeline (Afaq, approval queue).
 - **Count once (plan 4.4):** a DENY counts once towards V1 and once as a T drop.
   V2 adds nothing more for the same message.
 
